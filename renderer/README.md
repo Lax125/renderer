@@ -1,1 +1,0 @@
-A simple 3-D renderer and engine.
