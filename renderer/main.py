@@ -1,6 +1,7 @@
 #usr/bin/python
 
 from render import *
+import time
 
 def test():
   r = Renderer()

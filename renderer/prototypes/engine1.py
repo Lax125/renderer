@@ -3,14 +3,12 @@
 from filein import *
 from math import pi, tau, sin, cos, tan, atan, sqrt
 import numpy as np
-import math
-from typing import List, Tuple, Dict, Iterable
 
-def intify(words) -> List[int]:
+def intify(words):
   '''Intifies all items in list'''
   return [int(word) for word in words]
 
-def floatify(words) -> List[float]:
+def floatify(words):
   '''Floatifies all items in list'''
   return [float(word) for word in words]
 
@@ -20,7 +18,7 @@ def fix_range(n, R):
   assert a <= b
   return max(a, min(b, n))
 
-def get_rotmatrix(rx, ry, rz) -> np.matrix: # -TILT, PAN, -ROLL
+def get_rotmatrix(rx, ry, rz): # -TILT, PAN, -ROLL
   '''Gets transformation matrix that rotates a point about rx, ry, rx'''
   x_rm = np.matrix([[1, 0,        0      ],
                     [0, cos(rx), -sin(rx)],
@@ -58,15 +56,15 @@ def mix_permute(lA, lB):
 
 class Point2d: # IMMUTABLE
   '''Describes a point in 2 dimensions'''
-  def __init__(self, xy) -> None:
+  def __init__(self, xy):
     assert len(xy) == 2
     assert all(type(n) in (int, float) for n in xy)
     self._xy = xy[0], xy[1]
 
-  def __repr__(self) -> str:
+  def __repr__(self):
     return "Point2d(%s)"%self._xy
 
-  def __str__(self) -> str:
+  def __str__(self):
     return str(self._xy)
 
   def __getitem__(self, i):
@@ -76,7 +74,7 @@ class Point2d: # IMMUTABLE
     for n in self._xy:
       yield n
 
-  def __len__(self) -> int:
+  def __len__(self):
     return 2
 
   def __add__(self, dxy): # vector-like addition
@@ -106,18 +104,18 @@ class Point2d: # IMMUTABLE
 
 class Point: # IMMUTABLE
   '''Describes a point in 3 dimensions'''
-  def __init__(self, xyz) -> None:
+  def __init__(self, xyz):
     assert len(xyz) == 3
     assert all(type(n) in (int, float) for n in xyz)
     self._xyz = xyz[0], xyz[1], xyz[2]
 
-  def __repr__(self) -> str:
+  def __repr__(self):
     return "Point(%s)"%self._xyz
 
-  def __str__(self) -> str:
+  def __str__(self):
     return str(self._xyz)
 
-  def __getitem__(self, i: int):
+  def __getitem__(self, i):
     return self._xyz[i]
 
   def __iter__(self):
@@ -165,7 +163,7 @@ class Point: # IMMUTABLE
                       [y],
                       [z]])
 
-  def transform(self, transmatrix: np.matrix):
+  def transform(self, transmatrix):
     m = self.get_mat()
     new_m = transmatrix * m
     return Point(floatify(new_m.A1))
@@ -173,6 +171,7 @@ class Point: # IMMUTABLE
 class Tri: # IMMUTABLE
   '''Describes a 3-D triangle with a 3-tuple of 3-D points'''
   def __init__(self, points, colour="#ff00ff60"):
+    assert type(points) in (tuple, list)
     assert len(points) == 3
     assert all(type(p) is Point for p in points)
     self._points = tuple(points)
@@ -216,6 +215,7 @@ class Tri: # IMMUTABLE
 class Polygon: # IMMUTABLE
   '''Describes a 3-D polygon with a list of 3-D points'''
   def __init__(self, points, colour="#ff00ff60"):
+    assert type(points) in (tuple, list)
     assert len(points) >= 3
     assert all(type(p) is Point for p in points)
     self._points = list(points)
@@ -256,7 +256,9 @@ class Polygon: # IMMUTABLE
 
 class BoundingBox: # IMMUTABLE
   '''Describes a 3-d bounding box from a minimum and maximum point'''
-  def __init__(self, pMIN: Point, pMAX: Point):
+  def __init__(self, pMIN, pMAX):
+    assert type(pMIN) is Point
+    assert type(pMAX) is Point
     assert all(a <= b for a, b in zip(pMIN, pMAX))
     self._pMIN = pMIN
     self._pMAX = pMAX
@@ -317,8 +319,9 @@ class Model: # MUTABLE: CHANGE SCALE, ORIENTATION, AND POSITION
       basepolys.append(Polygon(poly_bps, colour=colour))
     return Model(basepolys, *args, **kwargs)
       
-  def __init__(self, basepolys=[], pos: Point=Point((0, 0, 0)), scale=1, rx=0.0, ry=0.0, rz=0.0):
+  def __init__(self, basepolys=[], pos=Point((0, 0, 0)), scale=1, rx=0.0, ry=0.0, rz=0.0):
     assert all(type(bp) is Polygon for bp in basepolys)
+    assert type(pos) is Point
     self._basepolys = basepolys
     self._baseedges = self.eval_baseedges()
     self._pos = pos
@@ -412,25 +415,26 @@ class Model: # MUTABLE: CHANGE SCALE, ORIENTATION, AND POSITION
 
 class Scene: # MUTABLE: ADD/REMOVE MODELS
   '''Describes a scene of objects using a list of them'''
-  def __init__(self, models=set(), bg="#000000") -> None:
+  def __init__(self, models=set(), bg="#000000"):
     assert all(type(m) is Model for m in models)
     self._models = set(models)
     self._bg = bg
 
-  def __getitem__(self, i) -> Model:
+  def __getitem__(self, i):
     return self._models[i]
 
-  def __iter__(self) -> Iterable[Model]:
+  def __iter__(self):
     for m in self._models:
       yield m
 
-  def set_bg(self, bg) -> None:
+  def set_bg(self, bg):
     self._bg = bg
 
   def get_bg(self):
     return self._bg
 
-  def add(self, model: Model):
+  def add(self, model):
+    assert type(model) is Model
     self._models.add(model)
 
   def remove(self, model):
@@ -448,7 +452,14 @@ class Scene: # MUTABLE: ADD/REMOVE MODELS
 
 class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
   '''Describes a point in 3 dimensions in which a picture may be projected to'''
-  def __init__(self, pos: Point=Point((0, 0, 0)), pan=0.0, tilt=0.0, roll=0.0, xspan=300, yspan=200, logzoom=1.8, maxdepth: float=100.0, scene=Scene()) -> None:
+  def __init__(self, pos=Point((0, 0, 0)), pan=0.0, tilt=0.0, roll=0.0, xspan=300, yspan=200, logzoom=1.8, maxdepth=100, scene=Scene()):
+    assert type(pos) is Point
+    assert type(pan) in (int, float)
+    assert type(tilt) in (int, float)
+    assert type(roll) in (int, float)
+    assert type(xspan) in (int, float)
+    assert type(yspan) in (int, float)
+    assert type(logzoom) in (int, float)
     pan %= tau # rotates counterclockwise as pan increases
     tilt = fix_range(tilt, (-pi, pi)) # tilt increase: camera tilts upwards and vise-versa
     roll = fix_range(roll, (-pi, pi)) # roll increase: camera rotates counterclockwise and vise-versa
@@ -470,99 +481,100 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
     self._visible_models = []
     self._scene = scene
 
-  def _update_all(self) -> None:
+  def _update_all(self):
     self._update_rotvars()
     self._update_visible_models()
 
-  def _update_rotvars(self) -> None:
+  def _update_rotvars(self):
     self._rotmatrix = get_rotmatrix(self._tilt, -self._pan, self._roll)
 
-  def _update_visible_models(self) -> None:
+  def _update_visible_models(self):
     self._visible_models = []
     for model in self._scene:
       if self.isvisible_bbox(model.get_bbox()):
         self._visible_models.append(model)
 
-  def get_visible_tris(self) -> Tri:
+  def get_visible_tris(self):
     for model in self._visible_models:
       for tri in model.get_tris():
         yield tri
 
-  def set_resolution(self, X2, Y2) -> None:
+  def set_resolution(self, X2, Y2):
     assert X2 > 0
     assert Y2 > 0
     self._xspan = X2 / 2
     self._yspan = Y2 / 2
 
-  def get_resolution(self) -> Tuple[int, int]:
+  def get_resolution(self):
     return (round(2*abs(self._xspan)), round(2*abs(self._yspan)))
 
-  def set_xaov(self, xaov: float) -> None: # sets zoom based on xaov--Angle of View in the x axis
+  def set_xaov(self, xaov): # sets zoom based on xaov--Angle of View in the x axis
     assert 0 < xaov < pi
     X = tan(xaov/2)
-    self.set_logzoom(math.log10(self._xspan/X))
+    self._zoom = self._xspan/X
 
-  def get_xaov(self) -> float:
+  def get_xaov(self):
     return 2 * atan(self._xspan/self._zoom)
 
   def get_pos(self):
     return self._pos
 
-  def move(self, dxyz) -> None:
+  def move(self, dxyz):
     self._pos += dxyz
 
-  def move_to(self, xyz) -> None:
+  def move_to(self, xyz):
     self._pos = Point(xyz)
 
-  def get_pan(self) -> float:
-    return float(self._pan)
+  def get_pan(self):
+    return self._pan
 
-  def get_tilt(self) -> float:
-    return float(self._tilt)
+  def get_tilt(self):
+    return self._tilt
 
-  def get_roll(self) -> float:
-    return float(self._roll)
+  def get_roll(self):
+    return self._pan
 
-  def set_pan(self, new_pan: float) -> None:
+  def set_pan(self, new_pan):
     assert type(new_pan) in (int, float)
     new_pan %= tau
     self._pan = new_pan
     self._update_rotvars()
 
-  def set_tilt(self, new_tilt: float) -> None:
+  def set_tilt(self, new_tilt):
     assert type(new_tilt) in (int, float)
     new_tilt = fix_range(new_tilt, (-pi, pi))
     self._tilt = new_tilt
     self._update_rotvars()
 
-  def set_roll(self, new_roll: float) -> None:
+  def set_roll(self, new_roll):
     assert type(new_roll) in (int, float)
     new_roll = fix_range(new_roll, (-pi, pi))
     self._roll = new_roll
     self._update_rotvars()
 
-  def change_pan(self, d_theta) -> None:
+  def change_pan(self, d_theta):
     self.set_pan(self._pan + d_theta)
 
-  def change_tilt(self, d_phi) -> None:
+  def change_tilt(self, d_phi):
     self.set_tilt(self._tilt + d_phi)
 
-  def change_roll(self, d_psi) -> None:
+  def change_roll(self, d_psi):
     self.set_roll(self._roll + d_psi)
 
-  def set_logzoom(self, new_logzoom) -> None:
+  def set_logzoom(self, new_logzoom):
     assert type(new_logzoom) in (int, float)
     self._logzoom = new_logzoom
     self._zoom = 10**new_logzoom
 
-  def change_logzoom(self, dlz) -> None:
+  def change_logzoom(self, dlz):
     self.set_logzoom(self._logzoom + dlz)
 
-  def set_maxdepth(self, new_maxdepth: float) -> None:
+  def set_maxdepth(self, new_maxdepth):
+    assert type(new_maxdepth) in (int, float)
     assert new_maxdepth > 0
     self._maxdepth = new_maxdepth
 
-  def get_maxdepth(self) -> float:
+  def get_maxdepth(self):
     return self._maxdepth
 
   def get_reldirvector(self, XY):
@@ -575,8 +587,9 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
     rotated_dxyz = self._rotmatrix*dxyz
     return rotated_dxyz
 
-  def get_depth(self, point) -> float:
-    return float(self.get_relcoords(point)[2])
+  def get_depth(self, point):
+    return self.get_relcoords(point)[2]
+      
 
   def orthoproject_point(self, point):
     rdx, rdy, rdz = self.get_relcoords(point)
@@ -584,7 +597,7 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
     Y = self._zoom*rdy
     return Point2d((X, Y))
 
-  def project_point(self, point: Point): # returns (X, Y)--The displacements from the centre of viewbox
+  def project_point(self, point): # returns (X, Y)--The displacements from the centre of viewbox
     rdx, rdy, rdz = self.get_relcoords(point)
     if rdz <= 0:
       return (None, None)
@@ -592,7 +605,7 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
     Y = self._zoom*(rdy/rdz)
     return Point2d((X, Y))
 
-  def project_segment(self, pA: Point, pB: Point):
+  def project_segment(self, pA, pB):
     xA, yA, zA = self.get_relcoords(pA)
     xB, yB, zB = self.get_relcoords(pB)
     if zA > 0 and zB > 0:
@@ -613,13 +626,13 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
       return (self._zoom*(xA/zA), self._zoom*(yA/zA)), (self._zoom*(xA + xC*10000), self._zoom*(yA + yC*10000))
     return (self._zoom*(xB/zB), self._zoom*(yB/zB)), (self._zoom*(xB + xC*10000), self._zoom*(yB + yC*10000))
 
-  def set_scene(self, scene: Scene):
+  def set_scene(self, scene):
     self._scene = scene
 
-  def isvisible_bbox(self, bbox: BoundingBox) -> bool:
+  def isvisible_bbox(self, bbox):
     return True # TODO
 
-  def get_wireframe_drawlines(self) -> Iterable[Tuple[Point, Point]]:
+  def get_wireframe_drawlines(self):
     for model in self._visible_models:
       for pA, pB in model.get_edges():
         ppA, ppB = self.project_segment(pA, pB)
@@ -629,7 +642,7 @@ class Camera: # MUTABLE: CHANGE ORIENTATION, POSITION, ZOOM
         coord_B = (ppB[0] + self._xspan, -ppB[1] + self._yspan)
         yield (coord_A, coord_B)
 
-  def get_bboxframe_drawlines(self) -> Iterable[Tuple[Point, Point]]:
+  def get_bboxframe_drawlines(self):
     for model in self._visible_models:
       for pA, pB in model.get_bbox().get_edges():
         ppA, ppB = self.project_segment(pA, pB)

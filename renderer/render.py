@@ -115,7 +115,6 @@ class Renderer:
   def render_quick(self):
     self.set_mode("QUICK")
     self._imquick = combine_layers([self.get_background(),
-                                    self.get_wireframe(),
                                     self.get_bboxframe()
                                     ])
 
