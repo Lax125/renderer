@@ -33,22 +33,27 @@ def load_texture(filename):
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,width,height,0,GL_RGBA,GL_UNSIGNED_BYTE,textureData)
     return ID
 
-DEFAULT_TEXTUREID = load_texture("./assets/textures/_default.png")
+def delete_texture(textureid):
+    glDeleteTextures(1, [textureid])
 
 class Obj:
     def __init__(self, filename):
         self.vertices = []
         self.texcoords = []
         self.normals = []
-        self.triangle_faces = []
+        self.edges = set()
+        self.tri_faces = []
         self.quad_faces = []
-        self.polygon_faces = []
+        self.poly_faces = []
+
+        self.filename = filename
         try:
-            self._load(filename)
+            self._load()
         except TypeError as e:
             print("Bad obj file. More info:\n"+str(e))
 
-    def _load(self, filename):
+    def _load(self):
+        filename = self.filename
         f = open(filename)
         n = 1
         for line in f:
@@ -73,6 +78,12 @@ class Obj:
                     nums = [int(strint) for strint in word.split("/")]
                     nums += [0]*(3-len(nums))
                     face.append(tuple(nums)) # v, vt, vn
+                for i in range(-1, len(face)-1):
+                    edge = (face[i][0], face[i+1][0])
+                    if edge in self.edges or edge[::-1] in self.edges:
+                        continue
+                    self.edges.add(edge)
+                
                 if len(face) == 3:
                     self.tri_faces.append(tuple(face))
                 elif len(face) == 4:
@@ -83,26 +94,34 @@ class Obj:
                     
         f.close()
 
+    def __repr__(self):
+        return "Obj(%s)"%self.filename
+
     def _render_face(self, face):
         normalid = face[0][2]
         if normalid:
             normal = self.normals[normalid-1] 
-            glNormal3fv(normal)
+            glNormal3f(*normal)
         for i, v in enumerate(face):
             texcoordid = v[1]
             if texcoordid:
-                glTexCoord2fv(self.texcoords[texcoordid])
+                glTexCoord2fv(self.texcoords[texcoordid-1])
             else:
                 glTexCoord2fv(gentexcoord(i/len(face)))
-            glVertex3fv(self.vertices[v[0]-1])
+            glVertex3f(*self.vertices[v[0]-1])
+
+    def _render_edge(self, edge):
+        pA, pB = self.vertices[edge[0]-1], self.vertices[edge[1]-1]
+        glVertex3f(*pA)
+        glVertex3f(*pB)
             
-    def render(self, textureID=DEFAULT_TEXTUREID):
+    def render(self, textureID):
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, textureID)
         
         # TRIANGLES
         glBegin(GL_TRIANGLES)
-        for face in (self.triangle_faces):
+        for face in (self.tri_faces):
             self._render_face(face)
         glEnd()
 
@@ -113,9 +132,16 @@ class Obj:
         glEnd()
 
         # N>4 POLYGONS
-        for face in (self.polygon_faces):
+        for face in (self.poly_faces):
             glBegin(GL_POLYGON)
             self._render_face(face)
             glEnd()
 
         glDisable(GL_TEXTURE_2D)
+
+    def render_wireframe(self): # for fast rendering
+        glBegin(GL_LINES)
+        for edge in self.edges:
+            self._render_edge(edge)
+        glEnd()
+        

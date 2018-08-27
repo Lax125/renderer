@@ -6,11 +6,15 @@ describes positioning and rotation of cameras and models
 
 import logging
 from typing import Iterable
-from math import sin, cos, tan, atan2, pi, tau
+import numpy as np
+from math import sin, cos, tan, atan2, pi, tau, hypot
 
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
 logger = logging.getLogger('rotpoint')
+
+def floatify(l):
+  return [float(n) for n in l]
 
 class Tuple3f: #IMMUTABLE
   '''Describes a 3-tuple of floats'''
@@ -62,6 +66,10 @@ class Tuple3f: #IMMUTABLE
 class Point(Tuple3f): # IMMUTABLE
   '''Describes a point in 3 dimensions'''
 
+  def __neg__(self):
+    x, y, z = self
+    return Point(-x, -y, -z)
+
   def __mul__(self, a):
     x, y, z = self
     if type(a) is Point: # dot multiplication
@@ -70,6 +78,8 @@ class Point(Tuple3f): # IMMUTABLE
     return Point(a*x, a*y, a*z)
 
   def __rmul__(self, a):
+    if type(a) is Rot:
+      return self.transform(a.get_transmat())
     if type(a) is np.matrix:
       return self.transform(a)
     return self * a
@@ -94,25 +104,31 @@ class Point(Tuple3f): # IMMUTABLE
 class Rot(Tuple3f):
   '''Describes a rotation in 3 dimensions.
      (rx, ry, rz):
-       rx - roll
-       ry - pitch
-       rz - yaw
+       rx - pitch
+       ry - yaw
+       rz - roll
   '''
+
+  def __init__(self, rx, ry, rz):
+    rx %= tau
+    ry %= tau
+    rz %= tau
+    super().__init__(rx, ry, rz)
 
   def from_delta3(dp, roll=0.0):
     '''Make Rot object from position delta'''
     dx, dy, dz = dp
-    rz = atan2(dy, dx)
-    ry = atan2(dz, hypot(dx, dy))
-    rx = roll
+    rz = roll
+    ry = atan2(dx, dz)
+    rx = atan2(dy, hypot(dx, dz))
     return Rot(rx, ry, rz)
 
   def get_transmat(self):
     '''Get transformation matrix of Rot object'''
     rx, ry, rz = self
     x_rm = np.matrix([[1, 0,        0      ],
-                      [0, cos(rx), -sin(rx)],
-                      [0, sin(rx),  cos(rx)]
+                      [0, cos(rx),  sin(rx)],
+                      [0, -sin(rx), cos(rx)]
                       ])
     y_rm = np.matrix([[ cos(ry), 0, sin(ry)],
                       [ 0,       1, 0      ],
@@ -122,8 +138,16 @@ class Rot(Tuple3f):
                       [sin(rz),  cos(rz), 0],
                       [0,        0,       1]
                       ])
-    return x_rm * y_rm * z_rm
+    #------YAW----PITCH--ROLL
+    return y_rm * x_rm * z_rm
+
+  def get_forward_vector(self):
+    return self * Point(0, 0, 1)
+
+  def get_upward_vector(self):
+    return self * Point(0, 1, 0)
 
 
 if __name__ == "__main__":
-  print(repr(Point(Point(1, 2, 3)) * Point(3, 2, 1)))
+  for i in range(100):
+    print(Rot(pi/3, pi*(i/100), pi/3).get_upward_vector())
