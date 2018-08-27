@@ -58,6 +58,8 @@ class Obj:
         n = 1
         for line in f:
             words = line.split()
+            if not words:
+                continue
             command = words[0]
             if command == "v":
                 vertex = tuple(float(word) for word in words[1:4])

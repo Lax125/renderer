@@ -156,10 +156,10 @@ def init(name="window0", method="glut", res=(600,600)):
 def main():
   init(name="Renderer", method="pygame")
   clock = pygame.time.Clock()
-  obj0 = objtex.Obj(r"./assets/objects/cube.obj")
+  obj0 = objtex.Obj(r"./assets/objects/icosahedron.obj")
   obj1 = objtex.Obj(r"./assets/objects/teapot.obj")
   tex0 = objtex.load_texture(r"./assets/textures/_default.png")
-  model0 = Model(obj0, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.6)
+  model0 = Model(obj0, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
   model1 = Model(obj1, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.3)
   camera = Camera(pos=Point(0.0, 0.0, 3.0), rot=Rot(0.0, pi, 0.0))
   scene = Scene(tex0, {model0, model1})
