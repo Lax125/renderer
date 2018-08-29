@@ -33,14 +33,17 @@ DELETE_MODEL = 9
 MOD_MODEL = 10
 # TODO: other command ids
 
+
 def setup_glut(res, name):
   glutInit(sys.argv)
   glutInitDisplayMode(GLUT_DOUBLE|GLUT_RGB|GLUT_DEPTH)
   glutInitWindowSize(*res)
   glutCreateWindow(name)
+  global resolution
+  resolution = res
 def setup_pygame(res, name):
   pygame.init()
-  pygame.display.set_mode(res, DOUBLEBUF|OPENGL)
+  pygame.display.set_mode(res, RESIZABLE|DOUBLEBUF|OPENGL)
   pygame.display.set_caption(name)
 
 def idle_glut():
@@ -54,6 +57,9 @@ def idle_pygame():
       # because I haven't completed the event handler in userenv.py:
       pygame.quit()
       sys.exit()
+    elif event.type is pygame.VIDEORESIZE:
+      global resolution
+      resolution = (event.w, event.h)
 
 def dispbuffer_glut():
   glutSwapBuffers()
@@ -61,10 +67,9 @@ def dispbuffer_pygame():
   pygame.display.flip()
 
 def getres_glut():
-  return (glutGet(GLUT_WINDOW_WIDTH), glutGet(GLUT_WINDOW_HEIGHT))
+  return resolution
 def getres_pygame():
-  s = pygame.display.get_surface()
-  return (s.get_width(), s.get_height())
+  return resolution
 
 setup = {"glut": setup_glut,
            "pygame": setup_pygame,

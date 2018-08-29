@@ -18,7 +18,7 @@ from engine import Camera, Model, Scene
 from context import Context
 from pygame.time import Clock
 
-from OpenGL.GLUT import *
+from OpenGL.GL import *
 
 def main():
   c = Context("pygame", (800, 400), "Renderer")
@@ -28,24 +28,23 @@ def main():
   obj2 = Obj(r"./assets/objects/octahedron.obj")
   obj3 = Obj(r"./assets/objects/dodecahedron.obj")
   obj4 = Obj(r"./assets/objects/texicosahedron.obj")
-  obj5 = Obj(r"./assets/objects/monkey.obj")
+  obj5 = Obj(r"./assets/objects/teapot.obj")
   tex0 = load_texture(r"./assets/textures/_default.png")
   tex1 = load_texture(r"./assets/textures/metal.jpg")
   tex2 = load_texture(r"./assets/textures/abstract.jpg")
   tex3 = load_texture(r"./assets/textures/white.png")
   model0 = Model(obj0, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
-  model1 = Model(obj1, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
+  model1 = Model(obj1, tex0, pos=Point(-0.2, 0.0, 0.0), scale=0.8)
   model2 = Model(obj2, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
-  model3 = Model(obj3, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.5)
-  model4 = Model(obj4, tex1, pos=Point(0.0, 0.0, 0.0), scale=0.6)
-  model5 = Model(obj5, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.5)
+  model3 = Model(obj3, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
+  model4 = Model(obj4, tex1, pos=Point(0.2, 0.0, 0.0), scale=0.8)
+  model5 = Model(obj5, tex0, pos=Point(-0.2, 0.0, 0.0), scale=0.4)
   camera = Camera(pos=Point(0.0, 0.0, 3.0), rot=Rot(0.0, pi, 0.0))
-  scene = Scene({model4})
+  scene = Scene({model1, model4})
 
   while True:
     clock.tick(60)
     c.idle()
-    #glutMainLoopEvent()
     model0.rot += Rot(0.01, 0.02, 0.03)
     model1.rot += Rot(0.02, 0.03, 0.01)
     model2.rot += Rot(0.03, 0.01, 0.02)
@@ -55,6 +54,7 @@ def main():
     camera.pos = Point(0.0, 0.0, 3.0)
     camera.rot = Rot(0.0, pi, 0.0)
     X, Y = c.getres()
+    glViewport(0,0, X, Y)
     scene.render(camera, aspect=X/Y, mode="full")
     c.dispbuffer()
 
