@@ -49,6 +49,10 @@ class Obj:
             print("Bad obj file. More info:\n"+str(e))
 
     def _clear(self):
+        # watertight means every polygon's vertices
+        # are put in the right order: counterclockwise
+        self.watertight = True # modify this as you please
+        
         self.vertices = [(0.0, 0.0, 0.0)] # 1-indexing
         self.texcoords = [(0.0, 0.0)] # 1-indexing, accounts for no-texcoord polygons
         self.normals = [(0.0, 0.0, 1.0)] # 1-indexing, accounts for no-normal polygons
@@ -181,8 +185,9 @@ class Obj:
         glVertex3fv(pB)
             
     def render(self, textureID): # GPU-powered rendering!
-        '''Render obj into buffers with texture from textureID'''
-        glEnable(GL_TEXTURE_2D)
+        '''Render obj into buffers with texture from textureID.'''
+        if self.watertight:
+            glEnable(GL_CULL_FACE)
         glBindTexture(GL_TEXTURE_2D, textureID)
 
 ##        #====IMMEDIATE (SLOW, DEPRECATED)====
@@ -225,5 +230,5 @@ class Obj:
         glDisableClientState(GL_NORMAL_ARRAY)
         glDisableClientState(GL_TEXTURE_COORD_ARRAY)
         glDisableClientState(GL_VERTEX_ARRAY)
-        
-        glDisable(GL_TEXTURE_2D)
+
+        glDisable(GL_CULL_FACE)

@@ -24,7 +24,7 @@ def main():
   c = Context("pygame", (800, 400), "Renderer")
   clock = Clock()
   obj0 = Obj(r"./assets/objects/tetrahedron.obj")
-  obj1 = Obj(r"./assets/objects/texcube.obj")
+  obj1 = Obj(r"./assets/objects/halfcube.obj")
   obj2 = Obj(r"./assets/objects/octahedron.obj")
   obj3 = Obj(r"./assets/objects/dodecahedron.obj")
   obj4 = Obj(r"./assets/objects/texicosahedron.obj")
@@ -38,7 +38,7 @@ def main():
   model2 = Model(obj2, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
   model3 = Model(obj3, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
   model4 = Model(obj4, tex1, pos=Point(0.2, 0.0, 0.0), scale=0.8)
-  model5 = Model(obj5, tex0, pos=Point(-0.2, 0.0, 0.0), scale=0.4)
+  model5 = Model(obj5, tex2, pos=Point(0.2, 0.0, 0.0), scale=0.4)
   camera = Camera(pos=Point(0.0, 0.0, 3.0), rot=Rot(0.0, pi, 0.0))
   scene = Scene({model1, model4})
 

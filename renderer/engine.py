@@ -90,7 +90,9 @@ class Scene:
   def render(self, camera, aspect=1.0, mode="full"):
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
     glMatrixMode(GL_MODELVIEW)
+    
     glEnable(GL_DEPTH_TEST)
+    glEnable(GL_TEXTURE_2D)
 
     ## SELECT SHADER
     pass # TODO
@@ -129,6 +131,8 @@ class Scene:
 
       # RENDER WITH CURRENT MATRIX
       model.render()
+    
+    glDisable(GL_TEXTURE_2D)
     glDisable(GL_DEPTH_TEST)
     
 

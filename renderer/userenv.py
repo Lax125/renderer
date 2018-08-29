@@ -10,5 +10,8 @@ Describes user environment class that contains:
 "Look at me. I'm the captain now."
 '''
 
+
 class UserEnv:
-  pass #TODO
+  def __init__(self):
+    pass
+

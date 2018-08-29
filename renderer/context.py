@@ -16,23 +16,6 @@ from OpenGL.GLUT import * # basically everything here begins with GLUT
 import pygame
 from pygame.locals import *
 
-from collections import deque
-
-event_queue = deque()
-
-EXIT = 0
-SAVE_SCENE = 1
-LOAD_SCENE = 2
-EXPORT_IMAGE = 3
-NEW_TEXTURE = 4
-SELECT_TEXTURE = 5
-DELETE_TEXTURE = 6
-MAKE_MODEL = 7
-SELECT_MODEL = 8
-DELETE_MODEL = 9
-MOD_MODEL = 10
-# TODO: other command ids
-
 
 def setup_glut(res, name):
   glutInit(sys.argv)
@@ -47,14 +30,10 @@ def setup_pygame(res, name):
   pygame.display.set_caption(name)
 
 def idle_glut():
-  glutMainLoopEvent()
+  pass
 def idle_pygame():
   for event in pygame.event.get():
     if event.type is pygame.QUIT:
-      global event_queue
-      event_queue.append((EXIT, dict()))
-
-      # because I haven't completed the event handler in userenv.py:
       pygame.quit()
       sys.exit()
     elif event.type is pygame.VIDEORESIZE:
