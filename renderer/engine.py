@@ -20,7 +20,7 @@ from OpenGL.GLU import *
 #   - DESCRIBING POSITIONS IN 3-D AND ROTATIONAL ORIENTATION
 #   - LOADING *.obj AND IMAGE FILES AS TEXTURES
 from rotpoint import Point, Rot
-from objtex import Obj, load_texture
+from objtex import Obj, Tex
 
 # FOR LOGGING
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
@@ -56,7 +56,7 @@ class Model:
 
   def from_files(objfn, texfn, *args, **kwargs):
     obj = Obj(objfn)
-    tex = load_texture(texfn)
+    tex = Tex(texfn)
     return Model(obj, tex, *args, **kwargs)
 
   def __repr__(self):

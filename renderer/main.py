@@ -12,7 +12,7 @@ import numpy as np
 from math import sin, cos, tan, pi, tau
 
 from rotpoint import Point, Rot
-from objtex import Obj, load_texture
+from objtex import Obj, Tex
 
 from engine import Camera, Model, Scene
 from context import Context
@@ -29,10 +29,10 @@ def main():
   obj3 = Obj(r"./assets/objects/dodecahedron.obj")
   obj4 = Obj(r"./assets/objects/texicosahedron.obj")
   obj5 = Obj(r"./assets/objects/teapot.obj")
-  tex0 = load_texture(r"./assets/textures/_default.png")
-  tex1 = load_texture(r"./assets/textures/metal.jpg")
-  tex2 = load_texture(r"./assets/textures/abstract.jpg")
-  tex3 = load_texture(r"./assets/textures/white.png")
+  tex0 = Tex(r"./assets/textures/_default.png")
+  tex1 = Tex(r"./assets/textures/metal.jpg")
+  tex2 = Tex(r"./assets/textures/abstract.jpg")
+  tex3 = Tex(r"./assets/textures/white.png")
   model0 = Model(obj0, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)
   model1 = Model(obj1, tex0, pos=Point(-0.2, 0.0, 0.0), scale=0.8)
   model2 = Model(obj2, tex0, pos=Point(0.0, 0.0, 0.0), scale=0.8)

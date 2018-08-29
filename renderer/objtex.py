@@ -36,17 +36,31 @@ def load_texture(filename):
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,width,height,0,GL_RGBA,GL_UNSIGNED_BYTE,textureData)
     return ID
 
-def delete_texture(textureid):
-    glDeleteTextures(1, [textureid])
+class Tex:
+    def __init__(self, filename):
+        self._clear()
+        self.filename = filename
+        self._load()
+
+    def _clear(self):
+        self.ID = None
+
+    def _load(self):
+        self.ID = load_texture(self.filename)
+
+    def delete(self):
+        glDeleteTextures([self.ID])
+        self.ID = 0 # OpenGL's default texture, white
+        self.filename = None
 
 class Obj:
     def __init__(self, filename):
         self._clear()
-        self._filename = filename
+        self.filename = filename
         try:
             self._load()
         except TypeError as e:
-            print("Bad obj file. More info:\n"+str(e))
+            raise TypeError("Bad obj file. More info:\n"+str(e))
 
     def _clear(self):
         # watertight means every polygon's vertices
@@ -69,7 +83,7 @@ class Obj:
         self.vbo_buffers = []
 
     def _load(self):
-        filename = self._filename
+        filename = self.filename
         f = open(filename)
         for line in f:
             words = line.split()
@@ -184,11 +198,11 @@ class Obj:
         glVertex3fv(pA)
         glVertex3fv(pB)
             
-    def render(self, textureID): # GPU-powered rendering!
+    def render(self, tex): # GPU-powered rendering!
         '''Render obj into buffers with texture from textureID.'''
         if self.watertight:
             glEnable(GL_CULL_FACE)
-        glBindTexture(GL_TEXTURE_2D, textureID)
+        glBindTexture(GL_TEXTURE_2D, tex.ID)
 
 ##        #====IMMEDIATE (SLOW, DEPRECATED)====
 ##        # TRIANGLES
@@ -232,3 +246,8 @@ class Obj:
         glDisableClientState(GL_VERTEX_ARRAY)
 
         glDisable(GL_CULL_FACE)
+
+    def delete(self):
+        self._clear()
+        self.filename = r"./assets/objects/cube.obj"
+        self._load()

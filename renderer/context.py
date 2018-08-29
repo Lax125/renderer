@@ -30,11 +30,14 @@ def setup_pygame(res, name):
   pygame.display.set_caption(name)
 
 def idle_glut():
-  pass
+  glutPostRedisplay()
 def idle_pygame():
   for event in pygame.event.get():
     if event.type is pygame.QUIT:
       pygame.quit()
+      # the following line should not be in the final product.
+      # the graphical part of the application should not
+      # control exit points.
       sys.exit()
     elif event.type is pygame.VIDEORESIZE:
       global resolution
