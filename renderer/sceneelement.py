@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 '''
-obj.py
+sceneelement.py
 original source: https://github.com/edward344/PyOpenGL-sample/blob/master/graphics.py
 changes:
     - texture coordinates specific to each face are taken into account
@@ -17,6 +17,12 @@ from OpenGL.GL import *
 from math import sin, cos, tau
 import ctypes
 from itertools import chain
+
+def id_gen(start=1):
+    next_id = start
+    while True:
+        yield next_id
+        next_id += 1
 
 def gentexcoord(f):
     X = (sin(f*tau)+1)/2
@@ -37,35 +43,44 @@ def load_texture(filename):
     return ID
 
 class Tex:
-    def __init__(self, filename):
+    def __init__(self, filename, name="texture0"):
         self._clear()
         self.filename = filename
+        self.name = name
         self._load()
 
     def _clear(self):
+        self.deleted = False
         self.ID = None
 
     def _load(self):
         self.ID = load_texture(self.filename)
 
     def delete(self):
+        self.deleted = True
         glDeleteTextures([self.ID])
         self.ID = 0 # OpenGL's default texture, white
         self.filename = None
+        self.name = None
 
 class Obj:
-    def __init__(self, filename):
+    IDs = id_gen(1)
+    def __init__(self, filename, name="object0"):
+        self.ID = next(Obj.IDs)
         self._clear()
         self.filename = filename
+        self.name = name
         try:
             self._load()
         except TypeError as e:
             raise TypeError("Bad obj file. More info:\n"+str(e))
 
     def _clear(self):
-        # watertight means every polygon's vertices
-        # are put in the right order: counterclockwise
-        self.watertight = True # modify this as you please
+        # cullbackface
+        #   OFF: show both front and back of each polygon
+        #   ON:  show only front face of each polygon
+        self.deleted = False
+        self.cullbackface = True # modify this as you please
         
         self.vertices = [(0.0, 0.0, 0.0)] # 1-indexing
         self.texcoords = [(0.0, 0.0)] # 1-indexing, accounts for no-texcoord polygons
@@ -200,7 +215,7 @@ class Obj:
             
     def render(self, tex): # GPU-powered rendering!
         '''Render obj into buffers with texture from textureID.'''
-        if self.watertight:
+        if self.cullbackface:
             glEnable(GL_CULL_FACE)
         glBindTexture(GL_TEXTURE_2D, tex.ID)
 
@@ -249,5 +264,8 @@ class Obj:
 
     def delete(self):
         self._clear()
+        self.ID = 0
         self.filename = r"./assets/objects/cube.obj"
+        self.name = None
         self._load()
+        self.deleted = True

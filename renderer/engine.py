@@ -18,9 +18,9 @@ from OpenGL.GLU import *
 
 # CUSTOM SCRIPTS FOR:
 #   - DESCRIBING POSITIONS IN 3-D AND ROTATIONAL ORIENTATION
-#   - LOADING *.obj AND IMAGE FILES AS TEXTURES
+#   - LOADING SHADERS
 from rotpoint import Point, Rot
-from objtex import Obj, Tex
+import shader
 
 # FOR LOGGING
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
@@ -46,18 +46,14 @@ class Camera:
 class Model:
   '''Describes polyhedron-like 3-D model in a position and orientation'''
   
-  def __init__(self, obj, tex, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0):
+  def __init__(self, obj, tex, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, name="model0"):
     '''Initialise 3-D model from loaded obj and texture files with position pos, rotation rot, and scale scale'''
     self.obj = obj
     self.tex = tex
     self.pos = pos
     self.rot = rot
     self.scale = scale
-
-  def from_files(objfn, texfn, *args, **kwargs):
-    obj = Obj(objfn)
-    tex = Tex(texfn)
-    return Model(obj, tex, *args, **kwargs)
+    self.name = name
 
   def __repr__(self):
     reprtuple = (repr(self.obj), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale))
@@ -87,36 +83,38 @@ class Scene:
   def remove(self, model):
     self.models.remove(model)
 
-  def render(self, camera, aspect=1.0, mode="full"):
+  def render(self, camera, aspect=1.0, mode="full", shader_name="basic"):
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
     glMatrixMode(GL_MODELVIEW)
-    
+
+    # Enable necessary gl modes
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_TEXTURE_2D)
 
     ## SELECT SHADER
-    pass # TODO
+##    shader.use(shader_name)
 
     ## PLACEHOLDER LIGHTING
-    # Ambient lighting
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
+##    # Ambient lighting
+##    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
+##
+##    # Positioned light
+##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [2, 2, 2, 1])
+##    glLightfv(GL_LIGHT1, GL_POSITION, [4, 8, 1, 1])
 
-    # Positioned light
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, [2, 2, 2, 1])
-    glLightfv(GL_LIGHT1, GL_POSITION, [4, 8, 1, 1])
+    # Push camera position/perspective matrix onto stack
+    glLoadIdentity()
+    gluPerspective(camera.fovy, aspect, *camera.zRange)
+    rx, ry, rz = camera.rot
+    defacto_rot = Rot(rx, -ry, -rz)
+    gluLookAt(0,0,0, *defacto_rot.get_forward_vector(), *defacto_rot.get_upward_vector())
+    glTranslatef(*-camera.pos)
+    glPushMatrix()
     
     for model in self.models:
-      glLoadIdentity() # loads identity matrix
-      # 1 0 0 0
-      # 0 1 0 0
-      # 0 0 1 0
-      # 0 0 0 1
-      gluPerspective(camera.fovy, aspect, *camera.zRange)
-      #print(glGetFloatv(GL_MODELVIEW_MATRIX))
-
-      # CAMERA POSITION AND ORIENTATION
-      gluLookAt(0,0,0, *camera.get_forward_vector(), *camera.get_upward_vector())
-      glTranslatef(*-camera.pos)
+      # Copy camera matrix from stack onto working matrix
+      glPopMatrix()
+      glPushMatrix()
 
       # TRANSLATE
       glTranslatef(*model.pos)
@@ -127,13 +125,18 @@ class Scene:
       # SCALE
       glScalef(model.scale, model.scale, model.scale)
 
-      #print(glGetFloatv(GL_MODELVIEW_MATRIX))
-
       # RENDER WITH CURRENT MATRIX
       model.render()
-    
+
+    # Pop camera matrix from stack. Net change in stack: 0
+    glPopMatrix()
+
+    # Diable applied gl modes
     glDisable(GL_TEXTURE_2D)
     glDisable(GL_DEPTH_TEST)
+
+def init_engine(): # only call once context has been established
+  shader.init()
     
 
 if __name__ == "__main__":

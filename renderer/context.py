@@ -30,8 +30,9 @@ def setup_pygame(res, name):
   pygame.display.set_caption(name)
 
 def idle_glut():
-  glutPostRedisplay()
+  pass
 def idle_pygame():
+  pygame.event.pump()
   for event in pygame.event.get():
     if event.type is pygame.QUIT:
       pygame.quit()

@@ -123,12 +123,28 @@ class Rot(Tuple3f):
     rx = atan2(dy, hypot(dx, dz))
     return Rot(rx, ry, rz)
 
+  def __neg__(self):
+    rx, ry, rz = self
+    return Rot(-rx, -ry, -rz)
+
   def get_transmat(self):
     '''Get transformation matrix of Rot object'''
     rx, ry, rz = self
+##    x_rm = np.matrix([[1,  0,       0      ],
+##                      [0,  cos(rx), sin(rx)],
+##                      [0, -sin(rx), cos(rx)]
+##                      ])
+##    y_rm = np.matrix([[cos(ry), 0, -sin(ry)],
+##                      [0,       1,  0      ],
+##                      [sin(ry), 0,  cos(ry)]
+##                      ])
+##    z_rm = np.matrix([[ cos(rz), sin(rz), 0],
+##                      [-sin(rz), cos(rz), 0],
+##                      [ 0,       0,       1]
+##                      ])
     x_rm = np.matrix([[1, 0,        0      ],
-                      [0, cos(rx),  sin(rx)],
-                      [0, -sin(rx), cos(rx)]
+                      [0, cos(rx), -sin(rx)],
+                      [0, sin(rx),  cos(rx)]
                       ])
     y_rm = np.matrix([[ cos(ry), 0, sin(ry)],
                       [ 0,       1, 0      ],
@@ -142,7 +158,7 @@ class Rot(Tuple3f):
     return y_rm * x_rm * z_rm
 
   def get_forward_vector(self):
-    return self * Point(0, 0, 1)
+    return self * Point(0, 0, -1)
 
   def get_upward_vector(self):
     return self * Point(0, 1, 0)
