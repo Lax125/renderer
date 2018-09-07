@@ -10,7 +10,17 @@ Describes user environment class that contains:
 *SMASH BROS ULTIMATE THEME STARTS PLAYING*
 '''
 
+from engine import Scene, Camera
+
 class UserEnv:
-  def __init__(self):
-    pass
+  def __init__(self, assets=set(), scene=Scene(), camera=Camera()):
+    self.assets = assets
+    self.scene = scene
+    self.camera = camera
+    self.focus = None
+
+  def __str__(self):
+    return '''[[User Environment]]
+  Assets: {}
+  Renderables: {}'''.format(len(self.assets), len(self.scene.rends))
 

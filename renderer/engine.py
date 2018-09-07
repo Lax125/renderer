@@ -43,64 +43,99 @@ class Camera:
   def get_upward_vector(self):
     return self.rot.get_upward_vector()
 
-class Model:
-  '''Describes polyhedron-like 3-D model in a position and orientation'''
-  
-  def __init__(self, obj, tex, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, name="model0"):
-    '''Initialise 3-D model from loaded obj and texture files with position pos, rotation rot, and scale scale'''
-    self.obj = obj
-    self.tex = tex
+class Renderable:
+  '''Base class for renderable objects: Models, Lights'''
+
+  def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, visible=True, name="renderable0"):
     self.pos = pos
     self.rot = rot
     self.scale = scale
+    self.visible = visible
     self.name = name
+
+  def __str__(self):
+    return self.name
+
+  def glMat(self):
+    # TRANSLATE
+    glTranslatef(*self.pos)
+
+    # ROTATE
+    gluLookAt(0,0,0, *self.rot.get_forward_vector(), *self.rot.get_upward_vector())
+
+    # SCALE
+    glScalef(self.scale, self.scale, self.scale)
+
+  def render(self): # overload with function that puts the renderable in the OpenGL environment
+    pass
+
+  def place(self):
+    self.glMat()
+    self.render()
+
+class Model(Renderable):
+  '''Describes polyhedron-like 3-D model in a position and orientation'''
+  
+  def __init__(self, obj, tex, *args, **kwargs):
+    '''Initialise 3-D model from loaded obj and texture files with position pos, rotation rot, and scale scale'''
+    self.obj = obj
+    self.tex = tex
+    super().__init__(*args, **kwargs)
 
   def __repr__(self):
     reprtuple = (repr(self.obj), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale))
     return "Model(%s, %s, pos=%s, rot=%s, scale=%s)"%reprtuple
 
   def render(self):
-    self.obj.render(self.tex)
+    if self.visible:
+      self.obj.render(self.tex)
 
-  def get_forward_vector(self):
-    return self.rot.get_forward_vector()
-
-  def get_upward_vector(self):
-    return self.rot.get_upward_vector()
+class Light(Renderable):
+  pass #TODO
 
 
 class Scene:
-  '''Defines a list of Model objects and background texture'''
+  '''Defines a list of renderable objects'''
   
-  def __init__(self, models=set()):
-    self.models = set()
-    for model in models:
-      self.add(model)
+  def __init__(self, rends=set()):
+    self.rends = set()
+    for rend in rends:
+      self.add(rend)
 
-  def add(self, model):
-    self.models.add(model)
+  def add(self, rend):
+    self.rends.add(rend)
 
-  def remove(self, model):
-    self.models.remove(model)
+  def remove(self, rend):
+    self.rends.remove(rend)
 
-  def render(self, camera, aspect=1.0, mode="full", shader_name="basic"):
+  def discard(self, rend):
+    self.rends.discard(rend)
+
+  def render(self, camera, aspect=None, mode="full", shader_name="basic"):
+    glClearColor(0.1, 0.1, 0.1, 0.0)
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+    
     glMatrixMode(GL_MODELVIEW)
 
     # Enable necessary gl modes
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_TEXTURE_2D)
+    glEnable(GL_LIGHTING)
+    glEnable(GL_LIGHT0)
+    glEnable(GL_NORMALIZE)
+    glEnable(GL_POLYGON_SMOOTH)
 
     ## SELECT SHADER
 ##    shader.use(shader_name)
 
-    ## PLACEHOLDER LIGHTING
-##    # Ambient lighting
-##    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
-##
-##    # Positioned light
-##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [2, 2, 2, 1])
-##    glLightfv(GL_LIGHT1, GL_POSITION, [4, 8, 1, 1])
+    # Ambient lighting
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [5.0, 5.0, 5.0, 1.0])
+
+##    # You have a torch with you
+##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [2.0, 2.0, 2.0, 1.0])
+##    glLightfv(GL_LIGHT0, GL_POSITION, [*(camera.pos + camera.get_forward_vector()), 1.0])
+####    glLightfv(GL_LIGHT1, GL_POSITION, [0, 0, 0, 0])
+####    glEnable(GL_LIGHT1)
 
     # Push camera position/perspective matrix onto stack
     glLoadIdentity()
@@ -111,29 +146,23 @@ class Scene:
     glTranslatef(*-camera.pos)
     glPushMatrix()
     
-    for model in self.models:
+    
+    for rend in self.rends:
+      if not rend.visible:
+        continue
+      
       # Copy camera matrix from stack onto working matrix
       glPopMatrix()
       glPushMatrix()
 
-      # TRANSLATE
-      glTranslatef(*model.pos)
-
-      # ROTATE
-      gluLookAt(0,0,0, *model.get_forward_vector(), *model.get_upward_vector())
-
-      # SCALE
-      glScalef(model.scale, model.scale, model.scale)
-
-      # RENDER WITH CURRENT MATRIX
-      model.render()
+      rend.place()
 
     # Pop camera matrix from stack. Net change in stack: 0
     glPopMatrix()
 
     # Diable applied gl modes
-    glDisable(GL_TEXTURE_2D)
     glDisable(GL_DEPTH_TEST)
+    glDisable(GL_TEXTURE_2D)
 
 def init_engine(): # only call once context has been established
   shader.init()

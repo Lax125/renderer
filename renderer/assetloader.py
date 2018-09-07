@@ -16,6 +16,7 @@ import pygame.image as im
 from OpenGL.GL import *
 from math import sin, cos, tau
 import ctypes
+import numpy as np
 from itertools import chain
 
 def id_gen(start=1):
@@ -42,7 +43,23 @@ def load_texture(filename):
     glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,width,height,0,GL_RGBA,GL_UNSIGNED_BYTE,textureData)
     return ID
 
-class Tex:
+class Asset:
+    def __init__(self, filename, name="asset0"):
+        self._clear()
+        self.filename = filename
+        self.name = name
+        self._load()
+
+    def _clear(self):
+        pass
+
+    def _load(self):
+        pass
+
+    def delete(self):
+        pass
+
+class Tex(Asset):
     def __init__(self, filename, name="texture0"):
         self._clear()
         self.filename = filename
@@ -63,7 +80,7 @@ class Tex:
         self.filename = None
         self.name = None
 
-class Obj:
+class Obj(Asset):
     IDs = id_gen(1)
     def __init__(self, filename, name="object0"):
         self.ID = next(Obj.IDs)
@@ -136,15 +153,36 @@ class Obj:
                 N_v = len(face)
                 
                 if N_v == 3:
-                    self.tri_faces.append(tuple(face))
+                    self.tri_faces.append(face)
                 elif N_v == 4:
-                    self.quad_faces.append(tuple(face))
+                    self.quad_faces.append(face)
                 else:
-                    self.poly_faces.append(tuple(face))
+                    self.poly_faces.append(face)
                     
         f.close()
+        self._gen_normals()
         self._gen_vbo_arrays()
         self._gen_vbo_buffers()
+
+    def _gen_normals(self):
+        for face in chain(self.tri_faces, self.quad_faces, self.poly_faces):
+            if face[0][2] != 0:
+                continue
+            A = self.vertices[face[0][0]]
+            B = self.vertices[face[1][0]]
+            C = self.vertices[face[2][0]]
+            AB = tuple(Bn-An for An, Bn in zip(A, B))
+            AC = tuple(Cn-An for An, Cn in zip(A, C))
+            x, y, z = normal = np.cross(AC, AB)
+##            magnitude = (x**2 + y**2 + z**2)**0.5
+##            print("NORMAL")
+##            print(AB, AC)
+##            print(tuple(normal))
+            self.normals.append(tuple(normal))
+            normal_index = len(self.normals)-1
+            for i, (v, vt, vn) in enumerate(face):
+                face[i] = (v, vt, normal_index)
+            
 
     def _gen_vbo_arrays(self):
         # TRIS

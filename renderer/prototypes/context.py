@@ -1,4 +1,5 @@
 #!/usr/bin/python
+## DEPRECATED
 '''
 context.py
 
@@ -10,7 +11,7 @@ describes window context for OpenGL buffer swap.
 "Oh for crying out loud..."
 '''
 
-import sys, os
+import sys, os, time
 
 from OpenGL.GLUT import * # basically everything here begins with GLUT
 import pygame
@@ -25,7 +26,7 @@ def setup_glut(res, name):
   global resolution
   resolution = res
 def setup_pygame(res, name):
-  pygame.init()
+  pygame.display.init()
   pygame.display.set_mode(res, RESIZABLE|DOUBLEBUF|OPENGL)
   pygame.display.set_caption(name)
 
@@ -33,12 +34,15 @@ def idle_glut():
   pass
 def idle_pygame():
   pygame.event.pump()
+  # the following lines should not be in the final product.
+  # the graphical part of the application should not
+  # control exit points.
   for event in pygame.event.get():
     if event.type is pygame.QUIT:
       pygame.quit()
-      # the following line should not be in the final product.
-      # the graphical part of the application should not
-      # control exit points.
+      sys.exit()
+    elif event.type is pygame.KEYDOWN and event.key is pygame.K_ESCAPE:
+      pygame.quit()
       sys.exit()
     elif event.type is pygame.VIDEORESIZE:
       global resolution
@@ -86,5 +90,9 @@ class Context:
     return getres[self.method]()
 
   
-    
+if __name__ == "__main__":
+  c = Context("pygame")
+  while True:
+    time.sleep(0.02)
+    c.idle()
     
