@@ -9,7 +9,7 @@ with the help of OpenGL
 import sys, os
 import logging
 import numpy as np
-from math import sin, cos, tan, pi, tau
+from math import sin, cos, tan, atan, atan2, pi, tau, degrees, radians
 
 # FOR BUFFER CALCULATION
 import OpenGL
@@ -30,11 +30,12 @@ logger = logging.getLogger('engine')
 class Camera:
   '''Describes a camera in 3-D position and rotation'''
   
-  def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), fovy=60, zRange=(0.1, 10000)):
+  def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), fovy=60, zoom=1.0, zRange=(0.1, 10000)):
     '''Initialise a Camera object in a position and rotation'''
     self.pos = pos
     self.rot = rot
     self.fovy = fovy # field of view in degrees in y axis
+    self.zoom = zoom # true fovy == atan(tan(fovy/2)/zoom)*2
     self.zRange = zRange # visible slice of the scene
 
   def get_forward_vector(self):
@@ -134,7 +135,8 @@ class Scene:
 
     # Push camera position/perspective matrix onto stack
     glLoadIdentity()
-    gluPerspective(camera.fovy, aspect, *camera.zRange)
+    defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
+    gluPerspective(defacto_fovy, aspect, *camera.zRange)
     rx, ry, rz = camera.rot
     defacto_rot = Rot(rx, -ry, -rz)
     gluLookAt(0,0,0, *defacto_rot.get_forward_vector(), *defacto_rot.get_upward_vector())

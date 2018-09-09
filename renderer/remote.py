@@ -7,7 +7,7 @@ All user-friendly functions to modify a UserEnv go here.
 '''
 
 from rotpoint import Rot, Point
-from assetloader import Obj, Tex
+from assetloader import Mesh, Tex
 from engine import Model, Camera
 from math import radians
 from OpenGL.GL import glViewport
@@ -17,9 +17,9 @@ class Remote:
     self.userenv = userenv
 
   def loadObject(self, fn):
-    new_obj = Obj(fn)
-    self.addAsset(new_obj)
-    return new_obj
+    new_mesh = Mesh(fn)
+    self.addAsset(new_mesh)
+    return new_mesh
 
   def loadTexture(self, fn):
     new_tex = Tex(fn)
@@ -54,20 +54,21 @@ class Remote:
   def hideRend(self, rend):
     rend.visible = False
 
-  def configModel(self, model, obj=None, tex=None, pos=None, rot=None, scale=None, name=None):
+  def configModel(self, model, mesh=None, tex=None, pos=None, rot=None, scale=None, name=None):
     assert model in self.userenv.models
-    model.obj = obj if obj is not None else model.obj
+    model.mesh = mmesh if mesh is not None else model.mesh
     model.tex = tex if tex is not None else model.tex
     model.pos = pos if pos is not None else model.pos
     model.rot = rot if rot is not None else model.rot
     model.scale = scale if scale is not None else model.scale
     model.name = name if name is not None else model.name
 
-  def configCamera(self, pos=None, rot=None, fovy=None):
+  def configCamera(self, pos=None, rot=None, fovy=None, zoom=None):
     cam = self.userenv.camera # sorry my fingers are tired
     cam.pos = pos if pos is not None else cam.pos
     cam.rot = rot if rot is not None else cam.rot
     cam.fovy = fovy if fovy is not None else cam.fovy
+    cam.zoom = zoom if zoom is not None else cam.zoom
 
   def changeCameraRot(self, drx, dry, drz):
     self.userenv.camera.rot += (drx, dry, drz)

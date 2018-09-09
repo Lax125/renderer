@@ -17,14 +17,18 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtOpenGL import *
 
 from rotpoint import Rot, Point
-from assetloader import Obj, Tex
+from assetloader import Mesh, Tex
 from engine import Model, Light, initEngine
 from userenv import UserEnv
 from remote import Remote
 
-from math import ceil
+from math import ceil, pi
 from time import gmtime, strftime
 from copy import deepcopy
+
+def cyclamp(x, R):
+  a, b = R
+  return (x-a)%(b-a) + a
 
 def getTimestamp():
   return strftime("UTC %y-%m-%d %H:%M:%S", gmtime())
@@ -74,6 +78,7 @@ class glWidget(QGLWidget):
   engine_initialised = False
   def __init__(self, parent):
     QGLWidget.__init__(self, parent)
+    self.parent = parent
     self.dims = (100, 100)
     self.aspect = 1.0
     self.refresh_rate = 60
@@ -122,10 +127,13 @@ class glWidget(QGLWidget):
         dp = dt * defacto_drot.get_transmat() * Point(dx, dy, dz)
         R.moveCamera(*dp)
 
+    self.parent.update()
+
 class AssetList(QListWidget):
   '''QT Widget: list of rends'''
   def __init__(self, parent=None):
     super().__init__(parent)
+    self.parent = parent
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
 
@@ -150,12 +158,14 @@ class RendList(QListWidget):
   '''QT Widget: list of rends'''
   def __init__(self, parent=None):
     super().__init__(parent)
+    self.parent = parent
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
     self.itemClicked.connect(self.onItemClicked)
 
   def onItemClicked(self, item):
     R.setFocus(item.rend)
+    self.parent.update()
 
   def add(self, rend):
     new_item = QListWidgetItem()
@@ -196,7 +206,7 @@ class MainApp(QMainWindow):
     file = bar.addMenu("File")
     file.addAction("Load project", self.loadProject)
     file.addAction("Save project", self.saveProject)
-    file.addAction("Load objects", self.loadObjects)
+    file.addAction("Load meshes", self.loadMeshes)
     file.addAction("Load textures", self.loadTextures)
     scene = bar.addMenu("Scene")
     scene.addAction("Make models", self.makeModels)
@@ -205,31 +215,42 @@ class MainApp(QMainWindow):
     view.addAction("Show Environment", self.showEnv)
     view.addAction("Show Edit", self.showEdit)
     view.addAction("Show Log", self.showLog)
+
+    self.setCentralWidget(glWidget(self))
     
     self.envPane = QDockWidget("Environment", self)
     self.envPane.setFeatures(QDockWidget.DockWidgetMovable|
                               QDockWidget.DockWidgetClosable)
     self.env = QTabWidget()
-    self.objectList = AssetList()
-    self.textureList = AssetList()
-    self.modelList = RendList()
-    self.lightList = RendList()
-    self.env.addTab(self.objectList, "Objects")
+    self.meshList = AssetList(self)
+    self.textureList = AssetList(self)
+    self.modelList = RendList(self)
+    self.lightList = RendList(self)
+    self.env.addTab(self.meshList, "Meshes")
     self.env.addTab(self.textureList, "Textures")
     self.env.addTab(self.modelList, "Models")
     self.env.addTab(self.lightList, "Lights")
     self.env.setTabEnabled(2, True)
     self.envPane.setWidget(self.env)
     self.envPane.setFloating(False)
-    self.setCentralWidget(glWidget(self))
     self.addDockWidget(Qt.LeftDockWidgetArea, self.envPane)
 
     self.editPane = QDockWidget("Edit", self)
     self.editPane.setFeatures(QDockWidget.DockWidgetMovable|
                               QDockWidget.DockWidgetClosable)
-    self.edit = QTextEdit() # PLACEHOLDER
-    self.edit.setText("===PLACEHOLDER===\n"+open("./assets/text/beemovie.txt").read())
+##    self.edit = QTextEdit() # PLACEHOLDER
+##    self.edit.setText("===PLACEHOLDER===\n"+open("./assets/text/beemovie.txt").read())
+    self.edit = QTabWidget()
+    self.camEdit = QWidget()
+    self.camScrollArea = QScrollArea()
+    self.selEdit = QWidget()
+    self.selScrollArea = QScrollArea()
+    self.edit.addTab(self.camScrollArea, "Camera")
+    self.edit.addTab(self.selScrollArea, "Selected")
     self.editPane.setWidget(self.edit)
+    self.initEditPane()
+    self.camScrollArea.setWidget(self.camEdit)
+    self.selScrollArea.setWidget(self.selEdit)
     self.addDockWidget(Qt.RightDockWidgetArea, self.editPane)
 
     self.logPane = QDockWidget("Log", self)
@@ -270,7 +291,7 @@ class MainApp(QMainWindow):
       self.logModel.removeRows(100, 1)
 
   def addEnvObj(self, envobj):
-    QListDict = {Obj: self.objectList,
+    QListDict = {Mesh: self.meshList,
                  Tex: self.textureList,
                  Model: self.modelList,
                  Light: self.lightList}
@@ -287,13 +308,13 @@ class MainApp(QMainWindow):
       return
     self.addEnvObj(rend)
 
-  def saveProject(self):
+  def saveProject(self): # TODO
     pass
 
-  def loadProject(self):
+  def loadProject(self): # TODO
     pass
 
-  def loadObjects(self):
+  def loadMeshes(self):
     fd = QFileDialog()
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFiles)
@@ -301,11 +322,11 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         try:
-          self.addAsset(Obj(fn))
+          self.addAsset(Mesh(fn))
         except:
-          self.logEntry("Error", "Bad object file: %s"%fn)
+          self.logEntry("Error", "Bad mesh file: %s"%fn)
         else:
-          self.logEntry("Success", "Loaded object from %s"%fn)
+          self.logEntry("Success", "Loaded mesh from %s"%fn)
 
   def loadTextures(self):
     fd = QFileDialog()
@@ -332,8 +353,8 @@ class MainApp(QMainWindow):
     layout.addWidget(assetBox, 0,0, 2,1)
     assetLayout = QFormLayout()
     assetBox.setLayout(assetLayout)
-    oList = copyAssetList(self.objectList)
-    assetLayout.addRow("Object", oList)
+    mList = copyAssetList(self.meshList)
+    assetLayout.addRow("Mesh", mList)
     tList = copyAssetList(self.textureList)
     assetLayout.addRow("Texture", tList)
     
@@ -371,16 +392,16 @@ class MainApp(QMainWindow):
     custLayout.addRow("Name", name)
 
     def tryMakeModel():
-      o = oList.selectedItems()
+      m = mList.selectedItems()
       t = tList.selectedItems()
-      if not (len(o) and len(t)):
-        self.logEntry("Error", "Please select an object and a texture.")
+      if not (len(m) and len(t)):
+        self.logEntry("Error", "Please select a mesh and a texture.")
         return
-      obj = o[0].asset
+      mesh = m[0].asset
       tex = t[0].asset
       pos = Point(x.value(), y.value(), z.value())
-      rot = Rot(rx.value(), ry.value(), rz.value())
-      model = Model(obj, tex, shininess=shininess.value(),
+      rot = Rot(pi*rx.value()/180, pi*ry.value()/180, pi*rz.value()/180)
+      model = Model(mesh, tex, shininess=shininess.value(),
                     pos=pos, rot=rot, scale=scale.value(),
                     name=name.text())
       self.addRend(model)
@@ -391,10 +412,10 @@ class MainApp(QMainWindow):
     layout.addWidget(make, 2,1, 1,1)
 
     def testValid():
-      
-      make.setEnabled(len(oList.selectedItems()) and len(tList.selectedItems()))
+      # there should be at least one selected model and texture
+      make.setEnabled(len(mList.selectedItems()) and len(tList.selectedItems()))
 
-    oList.itemClicked.connect(testValid)
+    mList.itemClicked.connect(testValid)
     tList.itemClicked.connect(testValid)
     testValid()
     M.resize(500, 500)
@@ -404,20 +425,119 @@ class MainApp(QMainWindow):
     # prompt user to make lights from position, diffuse part, specular part, direction, and angle of effect
     pass
 
+  def initEditPane(self):
+    self.initCamEdit()
+    self.initSelEdit()
+
+  def initCamEdit(self):
+    L = self.camEditLayout = QVBoxLayout()
+    self.camEdit.setLayout(L)
+
+    x = self.camEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.camEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.camEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = self.camEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    ry = self.camEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rz = self.camEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    fovy = self.camEdit_fovy = QDoubleSpinBox(minimum=0.01, maximum=179.99, value=60)
+    zoom = self.camEdit_zoom = QDoubleSpinBox(minimum=0.01, maximum=2147483647, value=1)
+    for setting in [x, y, z, rx, ry, rz, fovy, zoom]:
+      setting.valueChanged.connect(self.camEditUpdate)
+
+    poseBox = QGroupBox("Pose")
+    L.addWidget(poseBox)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Pan", ry)
+    poseLayout.addRow("Tilt", rx)
+    poseLayout.addRow("Roll", rz)
+
+    persBox = QGroupBox("Perspective")
+    L.addWidget(persBox)
+    persLayout = QFormLayout()
+    persBox.setLayout(persLayout)
+    persLayout.addRow("FOV", fovy)
+    persLayout.addRow("Zoom", zoom)
+    
+    self.updateCamEdit()
+
+  def initSelEdit(self):
+    L = self.selEditLayout = QVBoxLayout()
+    self.selEdit.setLayout(L)
+
+    x = self.selEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.selEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.selEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = self.selEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    ry = self.selEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rz = self.selEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    scale = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    name = QLineEdit()
+
+    poseBox = QGroupBox("Pose")
+    L.addWidget(poseBox)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Yaw", ry)
+    poseLayout.addRow("Pitch", rx)
+    poseLayout.addRow("Roll", rz)
+
+    matBox = QGroupBox("Material")
+    L.addWidget(matBox)
+    matLayout = QFormLayout()
+    matBox.setLayout(matLayout)
+    matLayout.addRow("Shininess", shininess)
+
+    custBox = QGroupBox("Customisation")
+    L.addWidget(custBox)
+    custLayout = QFormLayout()
+    custBox.setLayout(custLayout)
+    custLayout.addRow("Name", name)
+
+  def updateCamEdit(self): # true settings -> displayed settings
+    x, y, z = UE.camera.pos
+    rx, ry, rz = (cyclamp(UE.camera.rot[0]*180/pi, (-180, 180)),
+                  cyclamp(UE.camera.rot[1]*180/pi, (-180, 180)),
+                  cyclamp(UE.camera.rot[2]*180/pi, (-180, 180)))
+    fovy = UE.camera.fovy
+    zoom = UE.camera.zoom
+    for setting, var in [(self.camEdit_x, x),
+                         (self.camEdit_y, y),
+                         (self.camEdit_z, z),
+                         (self.camEdit_rx, rx),
+                         (self.camEdit_ry, ry),
+                         (self.camEdit_rz, rz),
+                         (self.camEdit_fovy, fovy),
+                         (self.camEdit_zoom, zoom)]:
+      setting.blockSignals(True)
+      setting.setValue(var)
+      setting.blockSignals(False)
+    return
+
+  def camEditUpdate(self): # displayed settings -> true settings
+    pos = Point(self.camEdit_x.value(),
+                self.camEdit_y.value(),
+                self.camEdit_z.value())
+    rot = Rot(pi*self.camEdit_rx.value()/180,
+              pi*self.camEdit_ry.value()/180,
+              pi*self.camEdit_rz.value()/180)
+    fovy = self.camEdit_fovy.value()
+    zoom = self.camEdit_zoom.value()
+    R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
+
+  def update(self):
+    self.updateCamEdit()
+    super().update()
+
 if __name__ == "__main__":
   window = QApplication(sys.argv)
   app = MainApp()
-  # for demo, add some models
-  from assetloader import Obj, Tex
-  from engine import Model, Light
-  from rotpoint import Rot, Point
-  teapotObj = Obj("./assets/objects/texicosahedron.obj")
-  metalTex = Tex("./assets/textures/metal.jpg")
-  app.addAsset(teapotObj)
-  app.addAsset(metalTex)
-  teapot = Model(teapotObj, metalTex, pos=Point(0.0, 0.0, -5.0), name="Icosahedron")
-  teapot2 = Model(teapotObj, metalTex, pos=Point(2, 0.0, -5.0), name="Icosahedron")
-  app.addRend(teapot)
-  app.addRend(teapot2)
   sys.exit(window.exec_())
 

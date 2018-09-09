@@ -84,18 +84,18 @@ class Tex(Asset):
 
     def delete(self):
         self.deleted = True
-        glDeleteTextures([self.ID])
+        glDeleteTextures([self.texID])
         self.texID = 0 # OpenGL's default texture, white
         self.filename = None
         self.name = None
-        Tex.texDict.discard(self)
+        del Tex.texDict[self.ID]
 
-class Obj(Asset):
+class Mesh(Asset):
     IDs = id_gen(1)
-    objDict = dict()
+    meshDict = dict()
     def __init__(self, filename, name=None, ID=0):
         if ID == 0:
-            ID = next(Obj.IDs)
+            ID = next(Mesh.IDs)
         self.ID = ID
         self._clear()
         self.filename = filename
@@ -105,9 +105,9 @@ class Obj(Asset):
         try:
             self._load()
         except Exception as e:
-            raise IOError("Bad obj file. More info:\n"+str(e))
+            raise IOError("Bad mesh file. More info:\n"+str(e))
         else:
-            Obj.objDict[self.ID] = self
+            Mesh.meshDict[self.ID] = self
 
     def _clear(self):
         # cullbackface
@@ -250,7 +250,7 @@ class Obj(Asset):
         self.vbo_buffers = buffers
 
     def __repr__(self):
-        return "Obj(%s)"%self.filename
+        return "Mesh(%s)"%self.filename
     
 
     def _render_face(self, face):
@@ -270,7 +270,7 @@ class Obj(Asset):
         glVertex3fv(pB)
             
     def render(self, tex): # GPU-powered rendering!
-        '''Render obj into buffers with texture from textureID.'''
+        '''Render mesh into buffers with texture from textureID.'''
         if self.cullbackface:
             glEnable(GL_CULL_FACE)
         glBindTexture(GL_TEXTURE_2D, tex.texID)
@@ -320,9 +320,8 @@ class Obj(Asset):
 
     def delete(self):
         self._clear()
-        self.ID = 0
-        self.filename = r"./assets/objects/cube.obj"
+        self.filename = r"./assets/meshes/cube.obj"
         self.name = None
         self._load()
         self.deleted = True
-        Obj.objDict.discard(self)
+        del Mesh.meshDict[self.ID]
