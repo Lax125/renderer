@@ -76,10 +76,11 @@ class Renderable:
 class Model(Renderable):
   '''Describes polyhedron-like 3-D model in a position and orientation'''
   
-  def __init__(self, obj, tex, *args, **kwargs):
+  def __init__(self, obj, tex, shininess=0.0, *args, **kwargs):
     '''Initialise 3-D model from loaded obj and texture files with position pos, rotation rot, and scale scale'''
     self.obj = obj
     self.tex = tex
+    self.shininess = shininess
     super().__init__(*args, **kwargs)
 
   def __repr__(self):
@@ -112,30 +113,24 @@ class Scene:
     self.rends.discard(rend)
 
   def render(self, camera, aspect=None, mode="full", shader_name="basic"):
-    glClearColor(0.1, 0.1, 0.1, 0.0)
+    glClearColor(0.0, 0.0, 0.1, 0.0)
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
     
     glMatrixMode(GL_MODELVIEW)
-
-    # Enable necessary gl modes
-    glEnable(GL_DEPTH_TEST)
-    glEnable(GL_TEXTURE_2D)
-    glEnable(GL_LIGHTING)
-    glEnable(GL_LIGHT0)
-    glEnable(GL_NORMALIZE)
-    glEnable(GL_POLYGON_SMOOTH)
 
     ## SELECT SHADER
 ##    shader.use(shader_name)
 
     # Ambient lighting
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [5.0, 5.0, 5.0, 1.0])
+##    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.5, 0.5, 0.5, 1.0])
 
-##    # You have a torch with you
-##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [2.0, 2.0, 2.0, 1.0])
-##    glLightfv(GL_LIGHT0, GL_POSITION, [*(camera.pos + camera.get_forward_vector()), 1.0])
-####    glLightfv(GL_LIGHT1, GL_POSITION, [0, 0, 0, 0])
-####    glEnable(GL_LIGHT1)
+    # You have a torch with you
+##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [10.0, 10.0, 10.0, 1.0])
+##    glLightfv(GL_LIGHT0, GL_SPECULAR, [2.0, 2.0, 2.0, 1.0])
+##    glLighti(GL_LIGHT0, GL_SPOT_CUTOFF, 30)
+##    glLightfv(GL_LIGHT0, GL_POSITION, [*camera.pos, 1.0])
+##    glLightfv(GL_LIGHT1, GL_POSITION, [0, 0, 0, 0])
+##    glEnable(GL_LIGHT1)
 
     # Push camera position/perspective matrix onto stack
     glLoadIdentity()
@@ -160,12 +155,19 @@ class Scene:
     # Pop camera matrix from stack. Net change in stack: 0
     glPopMatrix()
 
-    # Diable applied gl modes
-    glDisable(GL_DEPTH_TEST)
-    glDisable(GL_TEXTURE_2D)
-
-def init_engine(): # only call once context has been established
+def initEngine(): # only call once context has been established
   shader.init()
+
+  # Enable wanted gl modes
+  glEnable(GL_DEPTH_TEST)
+  glEnable(GL_TEXTURE_2D)
+  glEnable(GL_NORMALIZE)
+  glEnable(GL_POLYGON_SMOOTH)
+  glEnable(GL_DITHER)
+##  glEnable(GL_FOG)
+##  glFogi(GL_FOG_MODE, GL_EXP)
+##  glFogf(GL_FOG_END, 1000.0)
+##  glFogf(GL_FOG_DENSITY, 0.1)
     
 
 if __name__ == "__main__":

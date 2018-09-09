@@ -28,4 +28,10 @@ def init():
 
 def use(shader_name):
   shaders.glUseProgram(shaderDict[shader_name])
+
+if __name__ == "__main__":
+  import pygame
+  from pygame import *
+  pygame.display.set_mode((100, 100), OPENGL)
+  use("basic")
  

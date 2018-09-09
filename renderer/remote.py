@@ -72,6 +72,14 @@ class Remote:
   def changeCameraRot(self, drx, dry, drz):
     self.userenv.camera.rot += (drx, dry, drz)
 
+  def lookAt(self, rend):
+    dpos = rend.pos - self.userenv.camera.pos
+    self.userenv.camera.rot = Rot.from_delta3(dpos)
+
+  def setFocus(self, rend):
+    self.lookAt(rend)
+    self.userenv.focus = rend
+
   def moveCamera(self, dx, dy, dz):
     self.userenv.camera.pos += (dx, dy, dz)
 

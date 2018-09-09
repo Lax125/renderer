@@ -119,7 +119,7 @@ class Rot(Tuple3f):
     '''Make Rot object from position delta'''
     dx, dy, dz = dp
     rz = roll
-    ry = atan2(dx, dz)
+    ry = atan2(dx, -dz)
     rx = atan2(dy, hypot(dx, dz))
     return Rot(rx, ry, rz)
 

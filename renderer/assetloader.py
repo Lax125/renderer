@@ -11,6 +11,7 @@ changes:
 
 thanks edward344!
 '''
+import sys, os
 
 import pygame.image as im
 from OpenGL.GL import *
@@ -60,37 +61,53 @@ class Asset:
         pass
 
 class Tex(Asset):
-    def __init__(self, filename, name="texture0"):
+    IDs = id_gen(1)
+    texDict = dict()
+    def __init__(self, filename, name=None, ID=0):
+        if ID == 0:
+            ID = next(Tex.IDs)
+        self.ID = ID
         self._clear()
         self.filename = filename
+        if name is None:
+            name = os.path.basename(filename)
         self.name = name
         self._load()
+        Tex.texDict[self.ID] = self
 
     def _clear(self):
         self.deleted = False
-        self.ID = None
+        self.texID = None
 
     def _load(self):
-        self.ID = load_texture(self.filename)
+        self.texID = load_texture(self.filename)
 
     def delete(self):
         self.deleted = True
         glDeleteTextures([self.ID])
-        self.ID = 0 # OpenGL's default texture, white
+        self.texID = 0 # OpenGL's default texture, white
         self.filename = None
         self.name = None
+        Tex.texDict.discard(self)
 
 class Obj(Asset):
     IDs = id_gen(1)
-    def __init__(self, filename, name="object0"):
-        self.ID = next(Obj.IDs)
+    objDict = dict()
+    def __init__(self, filename, name=None, ID=0):
+        if ID == 0:
+            ID = next(Obj.IDs)
+        self.ID = ID
         self._clear()
         self.filename = filename
+        if name is None:
+            name = os.path.basename(filename)
         self.name = name
         try:
             self._load()
-        except TypeError as e:
-            raise TypeError("Bad obj file. More info:\n"+str(e))
+        except Exception as e:
+            raise IOError("Bad obj file. More info:\n"+str(e))
+        else:
+            Obj.objDict[self.ID] = self
 
     def _clear(self):
         # cullbackface
@@ -233,7 +250,7 @@ class Obj(Asset):
         self.vbo_buffers = buffers
 
     def __repr__(self):
-        return "Obj(%s)"%self._filename
+        return "Obj(%s)"%self.filename
     
 
     def _render_face(self, face):
@@ -247,6 +264,7 @@ class Obj(Asset):
             glVertex3fv(self.vertices[v[0]])
 
     def _render_edge(self, edge):
+        '''DEPRECATED: render single edge'''
         pA, pB = self.vertices[edge[0]], self.vertices[edge[1]]
         glVertex3fv(pA)
         glVertex3fv(pB)
@@ -255,7 +273,7 @@ class Obj(Asset):
         '''Render obj into buffers with texture from textureID.'''
         if self.cullbackface:
             glEnable(GL_CULL_FACE)
-        glBindTexture(GL_TEXTURE_2D, tex.ID)
+        glBindTexture(GL_TEXTURE_2D, tex.texID)
 
 ##        #====IMMEDIATE (SLOW, DEPRECATED)====
 ##        # TRIANGLES
@@ -307,3 +325,4 @@ class Obj(Asset):
         self.name = None
         self._load()
         self.deleted = True
+        Obj.objDict.discard(self)

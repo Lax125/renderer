@@ -18,21 +18,26 @@ from PyQt5.QtOpenGL import *
 
 from rotpoint import Rot, Point
 from assetloader import Obj, Tex
-from engine import Model, Light
+from engine import Model, Light, initEngine
 from userenv import UserEnv
 from remote import Remote
 
 from math import ceil
+from time import gmtime, strftime
+from copy import deepcopy
+
+def getTimestamp():
+  return strftime("UTC %y-%m-%d %H:%M:%S", gmtime())
 
 UE = UserEnv()
 R = Remote(UE)
 
-ROT_DELTAS = {Qt.Key_Left: (0, -1, 0),
-              Qt.Key_Right: (0, 1, 0),
-              Qt.Key_Down: (-1, 0, 0),
-              Qt.Key_Up: (1, 0, 0),
-              Qt.Key_Comma: (0, 0, -1),
-              Qt.Key_Period: (0, 0, 1)}
+ROT_DELTAS = {Qt.Key_Left: (0, -2, 0),
+              Qt.Key_Right: (0, 2, 0),
+              Qt.Key_Down: (-2, 0, 0),
+              Qt.Key_Up: (2, 0, 0),
+              Qt.Key_Comma: (0, 0, -2),
+              Qt.Key_Period: (0, 0, 2)}
 
 POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
               Qt.Key_D: (5, 0, 0),
@@ -41,8 +46,32 @@ POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
               Qt.Key_F: (0, -5, 0),
               Qt.Key_R: (0, 5, 0)}
 
+def copyAssetList(ql):
+  # makes copy of ql
+  cql = QListWidget()
+  for i in range(ql.count()):
+    item = ql.item(i)
+    citem = QListWidgetItem()
+    citem.asset = item.asset
+    citem.setText(item.text())
+    cql.addItem(citem)
+  return cql
+
+def copyRendList(ql):
+  # makes copy of ql
+  cql = QListWidget()
+  print(ql.count())
+  for i in range(ql.count()):
+    item = ql.item(i)
+    citem = QListWidgetItem()
+    citem.rend = item.rend
+    citem.setText(item.text())
+    cql.addItem(citem)
+  return cql
+
 class glWidget(QGLWidget):
   '''OpenGL QT widget'''
+  engine_initialised = False
   def __init__(self, parent):
     QGLWidget.__init__(self, parent)
     self.dims = (100, 100)
@@ -57,6 +86,9 @@ class glWidget(QGLWidget):
     self.setFocusPolicy(Qt.StrongFocus)
 
   def paintGL(self):
+    if not glWidget.engine_initialised:
+      glWidget.engine_initialised = True
+      initEngine()
     R.renderScene(aspect=self.aspect)
 
   def resizeGL(self, w, h):
@@ -94,12 +126,15 @@ class AssetList(QListWidget):
   '''QT Widget: list of rends'''
   def __init__(self, parent=None):
     super().__init__(parent)
+    self.setSortingEnabled(True)
+    self.setSelectionMode(3)
 
   def add(self, asset):
     new_item = QListWidgetItem()
     new_item.setText(asset.name)
     new_item.asset = asset
     self.addItem(new_item)
+    return new_item
 
   def remove(self, item):
     R.delAsset(item.asset)
@@ -115,12 +150,19 @@ class RendList(QListWidget):
   '''QT Widget: list of rends'''
   def __init__(self, parent=None):
     super().__init__(parent)
+    self.setSortingEnabled(True)
+    self.setSelectionMode(3)
+    self.itemClicked.connect(self.onItemClicked)
+
+  def onItemClicked(self, item):
+    R.setFocus(item.rend)
 
   def add(self, rend):
     new_item = QListWidgetItem()
     new_item.setText(rend.name)
     new_item.rend = rend
     self.addItem(new_item)
+    return new_item
 
   def remove(self, item):
     R.delRend(item.rend)
@@ -132,12 +174,17 @@ class RendList(QListWidget):
       for item in self.selectedItems():
         self.remove(item)
 
+class Modal(QDialog):
+  def __init__(self, *args, **kwargs):
+    QDialog.__init__(self, *args, **kwargs)
+    self.setModal(True)
+
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
   def __init__(self, parent=None):
     super().__init__(parent)
     self._make_widgets()
-    self.resize(800, 500)
+    self.resize(1000, 500)
     self.setWindowTitle("Renderer")
     self.show()
 
@@ -147,47 +194,215 @@ class MainApp(QMainWindow):
     
     bar = self.menuBar()
     file = bar.addMenu("File")
-    file.addAction("Load project")
-    file.addAction("Save project")
+    file.addAction("Load project", self.loadProject)
+    file.addAction("Save project", self.saveProject)
+    file.addAction("Load objects", self.loadObjects)
+    file.addAction("Load textures", self.loadTextures)
+    scene = bar.addMenu("Scene")
+    scene.addAction("Make models", self.makeModels)
+    scene.addAction("Make lights", self.makeLights)
+    view = bar.addMenu("View")
+    view.addAction("Show Environment", self.showEnv)
+    view.addAction("Show Edit", self.showEdit)
+    view.addAction("Show Log", self.showLog)
     
-    self.itemPane = QDockWidget("Scene", self)
-    self.itemPane.setFeatures(QDockWidget.DockWidgetMovable)
-    self.itemTabs = QTabWidget()
+    self.envPane = QDockWidget("Environment", self)
+    self.envPane.setFeatures(QDockWidget.DockWidgetMovable|
+                              QDockWidget.DockWidgetClosable)
+    self.env = QTabWidget()
     self.objectList = AssetList()
     self.textureList = AssetList()
     self.modelList = RendList()
     self.lightList = RendList()
-    self.itemTabs.addTab(self.objectList, "Objects")
-    self.itemTabs.addTab(self.textureList, "Textures")
-    self.itemTabs.addTab(self.modelList, "Models")
-    self.itemTabs.addTab(self.lightList, "Lights")
-    self.itemPane.setWidget(self.itemTabs)
-    self.itemPane.setFloating(False)
+    self.env.addTab(self.objectList, "Objects")
+    self.env.addTab(self.textureList, "Textures")
+    self.env.addTab(self.modelList, "Models")
+    self.env.addTab(self.lightList, "Lights")
+    self.env.setTabEnabled(2, True)
+    self.envPane.setWidget(self.env)
+    self.envPane.setFloating(False)
     self.setCentralWidget(glWidget(self))
-    self.addDockWidget(Qt.LeftDockWidgetArea, self.itemPane)
+    self.addDockWidget(Qt.LeftDockWidgetArea, self.envPane)
 
-    self.infoPane = QDockWidget("Info", self)
-    self.infoPane.setFeatures(QDockWidget.DockWidgetMovable)
-    self.infoContent = QTextEdit() # PLACEHOLDER
-    self.infoContent.setText("Hello, World!")
-    self.infoPane.setWidget(self.infoContent)
-    self.addDockWidget(Qt.BottomDockWidgetArea, self.infoPane)
+    self.editPane = QDockWidget("Edit", self)
+    self.editPane.setFeatures(QDockWidget.DockWidgetMovable|
+                              QDockWidget.DockWidgetClosable)
+    self.edit = QTextEdit() # PLACEHOLDER
+    self.edit.setText("===PLACEHOLDER===\n"+open("./assets/text/beemovie.txt").read())
+    self.editPane.setWidget(self.edit)
+    self.addDockWidget(Qt.RightDockWidgetArea, self.editPane)
+
+    self.logPane = QDockWidget("Log", self)
+    self.logPane.setFeatures(QDockWidget.DockWidgetMovable|
+                             QDockWidget.DockWidgetClosable)
+    self.logModel = QStandardItemModel(0,3, self.logPane)
+    self.logModel.setHorizontalHeaderLabels(["Type", "Info", "Timestamp"])
+    self.log = QTableView()
+    self.log.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    self.log.setModel(self.logModel)
+    self.log.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+    self.log.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+    self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+    self.logPane.setWidget(self.log)
+    self.addDockWidget(Qt.BottomDockWidgetArea, self.logPane)
+    self.logEntry("Info", "Welcome to Renderer 0.3.0")
+    self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
+  
+  def showEnv(self):
+    self.envPane.show()
+
+  def showEdit(self):
+    self.editPane.show()
+
+  def showLog(self):
+    self.logPane.show()
+
+  def logEntry(self, entryType, entryText):
+    assert entryType in ["Info",
+                         "Success",
+                         "Warning",
+                         "Error"]
+    etype = QStandardItem(entryType)
+    info = QStandardItem(entryText)
+    timestamp = QStandardItem(getTimestamp())
+    self.logModel.insertRow(0, [etype, info, timestamp])
+    if self.logModel.rowCount() > 100:
+      self.logModel.removeRows(100, 1)
+
+  def addEnvObj(self, envobj):
+    QListDict = {Obj: self.objectList,
+                 Tex: self.textureList,
+                 Model: self.modelList,
+                 Light: self.lightList}
+    L = QListDict[type(envobj)]
+    item = L.add(envobj)
     
   def addAsset(self, asset):
     if R.addAsset(asset):
       return
-    if isinstance(asset, Obj):
-      self.objectList.add(asset)
-    elif isinstance(asset, Tex):
-      self.textureList.add(asset)
+    self.addEnvObj(asset)
       
   def addRend(self, rend):
     if R.addRend(rend): # renderable already in the scene
       return
-    if isinstance(rend, Model):
-      self.modelList.add(rend)
-    elif isinstance(rend, Light):
-      self.lightList.add(rend)
+    self.addEnvObj(rend)
+
+  def saveProject(self):
+    pass
+
+  def loadProject(self):
+    pass
+
+  def loadObjects(self):
+    fd = QFileDialog()
+    fd.setAcceptMode(QFileDialog.AcceptOpen)
+    fd.setFileMode(QFileDialog.ExistingFiles)
+    fd.setNameFilters([r"Wavefront Object files (*.obj)"])
+    if fd.exec_():
+      for fn in fd.selectedFiles():
+        try:
+          self.addAsset(Obj(fn))
+        except:
+          self.logEntry("Error", "Bad object file: %s"%fn)
+        else:
+          self.logEntry("Success", "Loaded object from %s"%fn)
+
+  def loadTextures(self):
+    fd = QFileDialog()
+    fd.setAcceptMode(QFileDialog.AcceptOpen)
+    fd.setFileMode(QFileDialog.ExistingFiles)
+    fd.setNameFilters(["Images (*.bmp;*.png;*.jpg)"])
+    if fd.exec_():
+      for fn in fd.selectedFiles():
+        try:
+          self.addAsset(Tex(fn))
+        except:
+          self.logEntry("Error", "Bad image file: %s"%fn)
+        else:
+          self.logEntry("Success", "Loaded texture from %s"%fn)
+
+  def makeModels(self):
+    '''Instantiates and returns modal for making models'''
+    M = Modal(self)
+    M.setWindowTitle("Make Models")
+    layout = QGridLayout()
+    M.setLayout(layout)
+    
+    assetBox = QGroupBox("Assets")
+    layout.addWidget(assetBox, 0,0, 2,1)
+    assetLayout = QFormLayout()
+    assetBox.setLayout(assetLayout)
+    oList = copyAssetList(self.objectList)
+    assetLayout.addRow("Object", oList)
+    tList = copyAssetList(self.textureList)
+    assetLayout.addRow("Texture", tList)
+    
+    poseBox = QGroupBox("Pose")
+    layout.addWidget(poseBox, 0,1, 1,1)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    scale = QDoubleSpinBox(minimum=0, maximum=2147483647, value=1)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Yaw", ry)
+    poseLayout.addRow("Pitch", rx)
+    poseLayout.addRow("Roll", rz)
+    poseLayout.addRow("scale", scale)
+
+    matBox = QGroupBox("Material")
+    layout.addWidget(matBox, 1,1, 1,1)
+    matLayout = QFormLayout()
+    matBox.setLayout(matLayout)
+    shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    matLayout.addRow("Shininess", shininess)
+
+    custBox = QGroupBox("Customisation")
+    layout.addWidget(custBox, 2,0, 1,1)
+    custLayout = QFormLayout()
+    custBox.setLayout(custLayout)
+    name = QLineEdit(text="model0")
+    custLayout.addRow("Name", name)
+
+    def tryMakeModel():
+      o = oList.selectedItems()
+      t = tList.selectedItems()
+      if not (len(o) and len(t)):
+        self.logEntry("Error", "Please select an object and a texture.")
+        return
+      obj = o[0].asset
+      tex = t[0].asset
+      pos = Point(x.value(), y.value(), z.value())
+      rot = Rot(rx.value(), ry.value(), rz.value())
+      model = Model(obj, tex, shininess=shininess.value(),
+                    pos=pos, rot=rot, scale=scale.value(),
+                    name=name.text())
+      self.addRend(model)
+      self.logEntry("Success", "Made model.")
+
+    make = QPushButton(text="Make Model")
+    make.clicked.connect(tryMakeModel)
+    layout.addWidget(make, 2,1, 1,1)
+
+    def testValid():
+      
+      make.setEnabled(len(oList.selectedItems()) and len(tList.selectedItems()))
+
+    oList.itemClicked.connect(testValid)
+    tList.itemClicked.connect(testValid)
+    testValid()
+    M.resize(500, 500)
+    M.exec_()
+
+  def makeLights(self):
+    # prompt user to make lights from position, diffuse part, specular part, direction, and angle of effect
+    pass
 
 if __name__ == "__main__":
   window = QApplication(sys.argv)
