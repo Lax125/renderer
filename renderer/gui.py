@@ -17,8 +17,8 @@ from PyQt5.QtWidgets import *
 from PyQt5.QtOpenGL import *
 
 from rotpoint import Rot, Point
-from assetloader import Mesh, Tex
-from engine import Model, Light, initEngine
+from assetloader import Asset, Mesh, Tex
+from engine import Renderable, Model, Light, initEngine
 from userenv import UserEnv
 from remote import Remote
 
@@ -64,7 +64,6 @@ def copyAssetList(ql):
 def copyRendList(ql):
   # makes copy of ql
   cql = QListWidget()
-  print(ql.count())
   for i in range(ql.count()):
     item = ql.item(i)
     citem = QListWidgetItem()
@@ -81,7 +80,7 @@ class glWidget(QGLWidget):
     self.parent = parent
     self.dims = (100, 100)
     self.aspect = 1.0
-    self.refresh_rate = 60
+    self.refresh_rate = 30
     self.refresh_period = ceil(1000/self.refresh_rate)
     self.timer = QTimer()
     self.timer.setInterval(self.refresh_period)
@@ -136,6 +135,10 @@ class AssetList(QListWidget):
     self.parent = parent
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
+    self.itemClicked.connect(self.onItemClicked)
+
+  def onItemClicked(self, item):
+    self.parent.select(item.asset)
 
   def add(self, asset):
     new_item = QListWidgetItem()
@@ -165,7 +168,7 @@ class RendList(QListWidget):
 
   def onItemClicked(self, item):
     R.setFocus(item.rend)
-    self.parent.update()
+    self.parent.select(item.rend)
 
   def add(self, rend):
     new_item = QListWidgetItem()
@@ -189,10 +192,34 @@ class Modal(QDialog):
     QDialog.__init__(self, *args, **kwargs)
     self.setModal(True)
 
+##class VerticalScrollArea(QScrollArea):
+##  def __init__(self, *args, **kwargs):
+##    QScrollArea.__init__(self, *args, **kwargs)
+##    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+##
+##  def setWidget(self, W):
+##    self.minimumSizeHint = W.minimumSizeHint
+##    QScrollArea.setWidget(self, W)
+
+class ResizableStackedWidget(QStackedWidget):
+  def __init__(self, *args, **kwargs):
+    QStackedWidget.__init__(self, *args, **kwargs)
+    self.currentChanged.connect(self.onCurrentChanged)
+    
+  def sizeHint(self):
+    return self.currentWidget().sizeHint()
+
+  def minimumSizeHint(self):
+    return self.currentWidget().sizeHint()
+
+  def onCurrentChanged(self, i):
+    self.resize(self.currentWidget().sizeHint())
+
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
   def __init__(self, parent=None):
     super().__init__(parent)
+    self.selected = None
     self._make_widgets()
     self.resize(1000, 500)
     self.setWindowTitle("Renderer")
@@ -223,11 +250,11 @@ class MainApp(QMainWindow):
                               QDockWidget.DockWidgetClosable)
     self.env = QTabWidget()
     self.meshList = AssetList(self)
-    self.textureList = AssetList(self)
+    self.texList = AssetList(self)
     self.modelList = RendList(self)
     self.lightList = RendList(self)
     self.env.addTab(self.meshList, "Meshes")
-    self.env.addTab(self.textureList, "Textures")
+    self.env.addTab(self.texList, "Textures")
     self.env.addTab(self.modelList, "Models")
     self.env.addTab(self.lightList, "Lights")
     self.env.setTabEnabled(2, True)
@@ -238,12 +265,10 @@ class MainApp(QMainWindow):
     self.editPane = QDockWidget("Edit", self)
     self.editPane.setFeatures(QDockWidget.DockWidgetMovable|
                               QDockWidget.DockWidgetClosable)
-##    self.edit = QTextEdit() # PLACEHOLDER
-##    self.edit.setText("===PLACEHOLDER===\n"+open("./assets/text/beemovie.txt").read())
     self.edit = QTabWidget()
     self.camEdit = QWidget()
     self.camScrollArea = QScrollArea()
-    self.selEdit = QWidget()
+    self.selEdit = ResizableStackedWidget()
     self.selScrollArea = QScrollArea()
     self.edit.addTab(self.camScrollArea, "Camera")
     self.edit.addTab(self.selScrollArea, "Selected")
@@ -292,7 +317,7 @@ class MainApp(QMainWindow):
 
   def addEnvObj(self, envobj):
     QListDict = {Mesh: self.meshList,
-                 Tex: self.textureList,
+                 Tex: self.texList,
                  Model: self.modelList,
                  Light: self.lightList}
     L = QListDict[type(envobj)]
@@ -355,7 +380,7 @@ class MainApp(QMainWindow):
     assetBox.setLayout(assetLayout)
     mList = copyAssetList(self.meshList)
     assetLayout.addRow("Mesh", mList)
-    tList = copyAssetList(self.textureList)
+    tList = copyAssetList(self.texList)
     assetLayout.addRow("Texture", tList)
     
     poseBox = QGroupBox("Pose")
@@ -384,7 +409,7 @@ class MainApp(QMainWindow):
     shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
     matLayout.addRow("Shininess", shininess)
 
-    custBox = QGroupBox("Customisation")
+    custBox = QGroupBox("Customization")
     layout.addWidget(custBox, 2,0, 1,1)
     custLayout = QFormLayout()
     custBox.setLayout(custLayout)
@@ -465,18 +490,61 @@ class MainApp(QMainWindow):
     self.updateCamEdit()
 
   def initSelEdit(self):
-    L = self.selEditLayout = QVBoxLayout()
-    self.selEdit.setLayout(L)
+    '''Initialises all layouts for the Selected tab of the Edit pane.'''
+    #===NIL===
+    L = QVBoxLayout()
+    info = QLabel(text="No object selected.")
+    L.addWidget(info)
+    L.setAlignment(info, Qt.AlignCenter)
+    W = self.nilEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
 
-    x = self.selEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.selEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.selEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    rx = self.selEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    ry = self.selEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    rz = self.selEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    scale = QDoubleSpinBox(minimum=0, maximum=2147483647)
-    shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
-    name = QLineEdit()
+    #===TEXTURE===
+    L = QVBoxLayout()
+    change = QPushButton(text="Change")
+    delete = QPushButton(text="Delete")
+    change.clicked.connect(self.reinitSelected)
+    delete.clicked.connect(self.deleteSelected)
+    L.addWidget(change)
+    L.addWidget(delete)
+    W = self.texEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===MESH===
+    L = QVBoxLayout()
+    change = QPushButton(text="Change")
+    delete = QPushButton(text="Delete")
+    cullbackface = QCheckBox(text="Watertight")
+    change.clicked.connect(self.reinitSelected)
+    delete.clicked.connect(self.deleteSelected)
+    cullbackface.stateChanged.connect(self.updateSelected)
+    L.addWidget(change)
+    L.addWidget(delete)
+    L.addWidget(cullbackface)
+    W = self.meshEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===MODEL===
+    L = QVBoxLayout()
+    
+    change = QPushButton(text="Change")
+    delete = QPushButton(text="Delete")
+    x = self.modelEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.modelEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.modelEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = self.modelEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    ry = self.modelEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rz = self.modelEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    scale = self.modelEdit_scale = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    shininess = self.modelEdit_shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
+
+    change.clicked.connect(self.reinitSelected)
+    delete.clicked.connect(self.deleteSelected)
+    L.addWidget(change)
+    L.addWidget(delete)
 
     poseBox = QGroupBox("Pose")
     L.addWidget(poseBox)
@@ -495,17 +563,19 @@ class MainApp(QMainWindow):
     matBox.setLayout(matLayout)
     matLayout.addRow("Shininess", shininess)
 
-    custBox = QGroupBox("Customisation")
-    L.addWidget(custBox)
-    custLayout = QFormLayout()
-    custBox.setLayout(custLayout)
-    custLayout.addRow("Name", name)
+    for setting in [x,y,z, rx,ry,rz, scale, shininess]:
+      setting.valueChanged.connect(self.updateSelected)
+
+    W = self.modelEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===UPDATE===
+    self.updateSelEdit()
 
   def updateCamEdit(self): # true settings -> displayed settings
     x, y, z = UE.camera.pos
-    rx, ry, rz = (cyclamp(UE.camera.rot[0]*180/pi, (-180, 180)),
-                  cyclamp(UE.camera.rot[1]*180/pi, (-180, 180)),
-                  cyclamp(UE.camera.rot[2]*180/pi, (-180, 180)))
+    rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in UE.camera.rot)
     fovy = UE.camera.fovy
     zoom = UE.camera.zoom
     for setting, var in [(self.camEdit_x, x),
@@ -532,8 +602,80 @@ class MainApp(QMainWindow):
     zoom = self.camEdit_zoom.value()
     R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
 
+  def reinitSelected(self):
+    pass
+
+  def deleteSelected(self):
+    listDict = {Mesh: self.meshList,
+                Tex: self.texList,
+                Model: self.modelList,
+                Light: self.lightList}
+    try:
+      l = listDict[type(self.selected)]
+    except KeyError:
+      return
+    for i in range(l.count()):
+      item = l.item(i)
+      if isinstance(l, AssetList) and item.asset is self.selected:
+        l.remove(item)
+        break
+      elif isinstance(l, RendList) and item.rend is self.selected:
+        l.remove(item)
+        break
+    self.selected = None
+    self.update()
+
+  def updateSelected(self):
+    S = self.selected
+    if type(self.selected) is Model:
+      S.pos = Point(self.modelEdit_x.value(),
+                    self.modelEdit_y.value(),
+                    self.modelEdit_z.value())
+      S.rot = Rot(pi*self.modelEdit_rx.value()/180,
+                  pi*self.modelEdit_ry.value()/180,
+                  pi*self.modelEdit_rz.value()/180)
+      S.scale = self.modelEdit_scale.value()
+      S.shininess = self.modelEdit_shininess.value()
+
+  def switchSelEdit(self, objType):
+    widgetDict = {Mesh: self.meshEdit,
+                  Tex: self.texEdit,
+                  Model: self.modelEdit}
+    if objType in widgetDict:
+      self.selEdit.setCurrentWidget(widgetDict[objType])
+    else:
+      self.selEdit.setCurrentWidget(self.nilEdit)
+
+  def updateSelEdit(self):
+    '''Switch to relevent layout and put in correct settings to display'''
+    S = self.selected
+    self.switchSelEdit(type(S))
+    if type(S) is Model:
+      x, y, z = S.pos
+      rx, ry, rz = S.rot
+      rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
+      scale = S.scale
+      shininess = S.shininess
+      for setting, var in [(self.modelEdit_x, x),
+                           (self.modelEdit_y, y),
+                           (self.modelEdit_z, z),
+                           (self.modelEdit_rx, rx),
+                           (self.modelEdit_ry, ry),
+                           (self.modelEdit_rz, rz),
+                           (self.modelEdit_scale, scale),
+                           (self.modelEdit_shininess, shininess)]:
+        setting.blockSignals(True)
+        setting.setValue(var)
+        setting.blockSignals(False)
+    self.selEdit.update()
+
+  def select(self, obj):
+    self.selected = obj
+    self.updateSelEdit()
+
   def update(self):
     self.updateCamEdit()
+    self.updateSelEdit()
     super().update()
 
 if __name__ == "__main__":
