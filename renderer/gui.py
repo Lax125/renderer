@@ -3,7 +3,7 @@
 '''
 gui.py
 
-Makes the graphical application
+Makes the graphical application and runs the main systems
 '''
 
 import sys, os
@@ -26,7 +26,7 @@ from math import ceil, pi
 from time import gmtime, strftime
 from copy import deepcopy
 
-def cyclamp(x, R):
+def cyclamp(x, R): # Like modulo, but based on cutom range
   a, b = R
   return (x-a)%(b-a) + a
 
@@ -73,7 +73,7 @@ def copyRendList(ql):
   return cql
 
 class glWidget(QGLWidget):
-  '''OpenGL QT widget'''
+  '''OpenGL+QT widget'''
   engine_initialised = False
   def __init__(self, parent):
     QGLWidget.__init__(self, parent)
@@ -188,20 +188,28 @@ class RendList(QListWidget):
         self.remove(item)
 
 class Modal(QDialog):
+  '''A dialog box that grabs focus until closed'''
   def __init__(self, *args, **kwargs):
     QDialog.__init__(self, *args, **kwargs)
     self.setModal(True)
 
-##class VerticalScrollArea(QScrollArea):
-##  def __init__(self, *args, **kwargs):
-##    QScrollArea.__init__(self, *args, **kwargs)
-##    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-##
-##  def setWidget(self, W):
-##    self.minimumSizeHint = W.minimumSizeHint
-##    QScrollArea.setWidget(self, W)
+class ResizableTabWidget(QTabWidget):
+  '''A tab widget that resizes based on current widget'''
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.currentChanged.connect(self.onCurrentChanged)
+
+  def sizeHint(self):
+    return self.currentWidget().sizeHint()
+
+  def minimumSizeHint(self):
+    return self.currentWidget().minimumSizeHint()
+
+  def onCurrentChanged(self, _):
+    self.resize(self.currentWidget().sizeHint())
 
 class ResizableStackedWidget(QStackedWidget):
+  '''A stacked widget that resizes based on the current widget'''
   def __init__(self, *args, **kwargs):
     QStackedWidget.__init__(self, *args, **kwargs)
     self.currentChanged.connect(self.onCurrentChanged)
@@ -210,10 +218,30 @@ class ResizableStackedWidget(QStackedWidget):
     return self.currentWidget().sizeHint()
 
   def minimumSizeHint(self):
-    return self.currentWidget().sizeHint()
+    return self.currentWidget().minimumSizeHint()
 
   def onCurrentChanged(self, i):
     self.resize(self.currentWidget().sizeHint())
+
+class VerticalScrollArea(QScrollArea):
+  '''A scroll area that scrolls vertically but acts normally horizontally'''
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+  def sizeHint(self):
+    W = self.widget()
+    if W:
+      return QSize(W.sizeHint().width() + self.verticalScrollBar().width(), 0)
+    return QSize(0, 0)
+
+  def minimumSizeHint(self):
+    W = self.widget()
+    if W:
+      return QSize(W.minimumSizeHint().width() + self.verticalScrollBar().width(), 0)
+    return QSize(0, 0)
+
+  
 
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
@@ -226,13 +254,16 @@ class MainApp(QMainWindow):
     self.show()
 
   def _make_widgets(self):
+    '''Initialise all widgets'''
     layout = QHBoxLayout()
     self.setLayout(layout)
     
     bar = self.menuBar()
     file = bar.addMenu("File")
-    file.addAction("Load project", self.loadProject)
+    file.addAction("New project", self.newProject)
+    file.addAction("Open project", self.openProject)
     file.addAction("Save project", self.saveProject)
+    file.addSeparator()
     file.addAction("Load meshes", self.loadMeshes)
     file.addAction("Load textures", self.loadTextures)
     scene = bar.addMenu("Scene")
@@ -248,7 +279,7 @@ class MainApp(QMainWindow):
     self.envPane = QDockWidget("Environment", self)
     self.envPane.setFeatures(QDockWidget.DockWidgetMovable|
                               QDockWidget.DockWidgetClosable)
-    self.env = QTabWidget()
+    self.env = ResizableTabWidget()
     self.meshList = AssetList(self)
     self.texList = AssetList(self)
     self.modelList = RendList(self)
@@ -265,11 +296,12 @@ class MainApp(QMainWindow):
     self.editPane = QDockWidget("Edit", self)
     self.editPane.setFeatures(QDockWidget.DockWidgetMovable|
                               QDockWidget.DockWidgetClosable)
-    self.edit = QTabWidget()
+    self.edit = ResizableTabWidget()
     self.camEdit = QWidget()
-    self.camScrollArea = QScrollArea()
+    self.camScrollArea = VerticalScrollArea()
     self.selEdit = ResizableStackedWidget()
-    self.selScrollArea = QScrollArea()
+    self.selEdit.currentChanged.connect(lambda i: self.edit.onCurrentChanged(0))
+    self.selScrollArea = VerticalScrollArea()
     self.edit.addTab(self.camScrollArea, "Camera")
     self.edit.addTab(self.selScrollArea, "Selected")
     self.editPane.setWidget(self.edit)
@@ -284,7 +316,7 @@ class MainApp(QMainWindow):
     self.logModel = QStandardItemModel(0,3, self.logPane)
     self.logModel.setHorizontalHeaderLabels(["Type", "Info", "Timestamp"])
     self.log = QTableView()
-    self.log.setEditTriggers(QAbstractItemView.NoEditTriggers)
+##    self.log.setEditTriggers(QAbstractItemView.NoEditTriggers)
     self.log.setModel(self.logModel)
     self.log.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
     self.log.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -295,15 +327,19 @@ class MainApp(QMainWindow):
     self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
   
   def showEnv(self):
+    '''Show environment pane'''
     self.envPane.show()
 
   def showEdit(self):
+    '''Show edit pane'''
     self.editPane.show()
 
   def showLog(self):
+    '''Show log pane'''
     self.logPane.show()
 
   def logEntry(self, entryType, entryText):
+    '''Log an entry into the log pane'''
     assert entryType in ["Info",
                          "Success",
                          "Warning",
@@ -315,7 +351,15 @@ class MainApp(QMainWindow):
     if self.logModel.rowCount() > 100:
       self.logModel.removeRows(100, 1)
 
+  def clearLists(self):
+    '''Empty all QListWidget's'''
+    self.meshList.clear()
+    self.texList.clear()
+    self.modelList.clear()
+    self.lightList.clear()
+
   def addEnvObj(self, envobj):
+    '''Adds environment object into appropriate QListWidget'''
     QListDict = {Mesh: self.meshList,
                  Tex: self.texList,
                  Model: self.modelList,
@@ -324,22 +368,35 @@ class MainApp(QMainWindow):
     item = L.add(envobj)
     
   def addAsset(self, asset):
-    if R.addAsset(asset):
+    '''Adds Asset object into scene and QListWidget'''
+    if R.addAsset(asset): # asset already in user environment
       return
     self.addEnvObj(asset)
       
   def addRend(self, rend):
+    '''Adds Renderable object into userenv and QListWidget'''
     if R.addRend(rend): # renderable already in the scene
       return
     self.addEnvObj(rend)
 
+  def newProject(self):
+    '''Clear user environment and QListWidgets'''
+    self.clearLists()
+    R.new()
+    self.selected = None
+    self.logEntry("Success", "Initialised new project.")
+    self.update()
+
   def saveProject(self): # TODO
+    '''Prompt to save project--NOT IMPLEMENTED'''
     pass
 
-  def loadProject(self): # TODO
+  def openProject(self): # TODO
+    '''Prompt to open project--NOT IMPLEMENTED'''
     pass
 
   def loadMeshes(self):
+    '''Prompt to load mesh files'''
     fd = QFileDialog()
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFiles)
@@ -347,13 +404,14 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         try:
-          self.addAsset(Mesh(fn))
+          self.addAsset(R.loadMesh(fn))
         except:
           self.logEntry("Error", "Bad mesh file: %s"%fn)
         else:
           self.logEntry("Success", "Loaded mesh from %s"%fn)
 
   def loadTextures(self):
+    '''Prompt to load texture files'''
     fd = QFileDialog()
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFiles)
@@ -361,19 +419,20 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         try:
-          self.addAsset(Tex(fn))
+          self.addAsset(R.loadTexture(fn))
         except:
           self.logEntry("Error", "Bad image file: %s"%fn)
         else:
           self.logEntry("Success", "Loaded texture from %s"%fn)
 
   def makeModels(self):
-    '''Instantiates and returns modal for making models'''
+    '''Shows modal for making models'''
     M = Modal(self)
     M.setWindowTitle("Make Models")
     layout = QGridLayout()
     M.setLayout(layout)
-    
+
+    # ASSET GROUP BOX
     assetBox = QGroupBox("Assets")
     layout.addWidget(assetBox, 0,0, 2,1)
     assetLayout = QFormLayout()
@@ -382,7 +441,8 @@ class MainApp(QMainWindow):
     assetLayout.addRow("Mesh", mList)
     tList = copyAssetList(self.texList)
     assetLayout.addRow("Texture", tList)
-    
+
+    # POSE GROUP BOX
     poseBox = QGroupBox("Pose")
     layout.addWidget(poseBox, 0,1, 1,1)
     poseLayout = QFormLayout()
@@ -402,6 +462,7 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Roll", rz)
     poseLayout.addRow("scale", scale)
 
+    # MATERIAL GROUP BOX
     matBox = QGroupBox("Material")
     layout.addWidget(matBox, 1,1, 1,1)
     matLayout = QFormLayout()
@@ -409,6 +470,7 @@ class MainApp(QMainWindow):
     shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
     matLayout.addRow("Shininess", shininess)
 
+    # CUSTOMISATION GROUP BOX
     custBox = QGroupBox("Customization")
     layout.addWidget(custBox, 2,0, 1,1)
     custLayout = QFormLayout()
@@ -416,7 +478,7 @@ class MainApp(QMainWindow):
     name = QLineEdit(text="model0")
     custLayout.addRow("Name", name)
 
-    def tryMakeModel():
+    def tryMakeModel(): # Attempt to construct Model from selected settings
       m = mList.selectedItems()
       t = tList.selectedItems()
       if not (len(m) and len(t)):
@@ -436,7 +498,7 @@ class MainApp(QMainWindow):
     make.clicked.connect(tryMakeModel)
     layout.addWidget(make, 2,1, 1,1)
 
-    def testValid():
+    def testValid(): # Update the button that constructs the model (enabled or disabled)
       # there should be at least one selected model and texture
       make.setEnabled(len(mList.selectedItems()) and len(tList.selectedItems()))
 
@@ -444,17 +506,19 @@ class MainApp(QMainWindow):
     tList.itemClicked.connect(testValid)
     testValid()
     M.resize(500, 500)
-    M.exec_()
+    M.exec_() # show the modal
 
   def makeLights(self):
-    # prompt user to make lights from position, diffuse part, specular part, direction, and angle of effect
+    '''Shows modal for making lights--NOT IMPLEMENTED'''
     pass
 
   def initEditPane(self):
+    '''Initialises the edit pane'''
     self.initCamEdit()
     self.initSelEdit()
 
   def initCamEdit(self):
+    '''Initialises the camera tab on the edit pane'''
     L = self.camEditLayout = QVBoxLayout()
     self.camEdit.setLayout(L)
 
@@ -516,7 +580,7 @@ class MainApp(QMainWindow):
     L = QVBoxLayout()
     change = QPushButton(text="Change")
     delete = QPushButton(text="Delete")
-    cullbackface = QCheckBox(text="Watertight")
+    cullbackface = self.meshEdit_cullbackface = QCheckBox(text="Watertight", tristate=False)
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
     cullbackface.stateChanged.connect(self.updateSelected)
@@ -574,6 +638,7 @@ class MainApp(QMainWindow):
     self.updateSelEdit()
 
   def updateCamEdit(self): # true settings -> displayed settings
+    '''Updates the displayed settings for the camera'''
     x, y, z = UE.camera.pos
     rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in UE.camera.rot)
     fovy = UE.camera.fovy
@@ -592,6 +657,7 @@ class MainApp(QMainWindow):
     return
 
   def camEditUpdate(self): # displayed settings -> true settings
+    '''Updates the camera variables from the displayed settings'''
     pos = Point(self.camEdit_x.value(),
                 self.camEdit_y.value(),
                 self.camEdit_z.value())
@@ -603,9 +669,11 @@ class MainApp(QMainWindow):
     R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
 
   def reinitSelected(self):
+    '''Prompts user to reinitialise the selected object from different files/assets'''
     pass
 
   def deleteSelected(self):
+    '''Deletes selected object'''
     listDict = {Mesh: self.meshList,
                 Tex: self.texList,
                 Model: self.modelList,
@@ -626,8 +694,13 @@ class MainApp(QMainWindow):
     self.update()
 
   def updateSelected(self):
+    '''Updates selected object from displayed settings'''
     S = self.selected
-    if type(self.selected) is Model:
+    if type(self.selected) is Mesh:
+      self.meshEdit_cullbackface.setTristate(False)
+      S.cullbackface = self.meshEdit_cullbackface.isChecked()
+      
+    elif type(self.selected) is Model:
       S.pos = Point(self.modelEdit_x.value(),
                     self.modelEdit_y.value(),
                     self.modelEdit_z.value())
@@ -638,6 +711,7 @@ class MainApp(QMainWindow):
       S.shininess = self.modelEdit_shininess.value()
 
   def switchSelEdit(self, objType):
+    '''Updates the stacked widget in the "Selected" tab of the edit pane'''
     widgetDict = {Mesh: self.meshEdit,
                   Tex: self.texEdit,
                   Model: self.modelEdit}
@@ -650,7 +724,12 @@ class MainApp(QMainWindow):
     '''Switch to relevent layout and put in correct settings to display'''
     S = self.selected
     self.switchSelEdit(type(S))
-    if type(S) is Model:
+    if type(S) is Mesh:
+      cullbackface = S.cullbackface
+      self.meshEdit_cullbackface.setCheckState(cullbackface)
+      self.meshEdit_cullbackface.setTristate(False)
+      
+    elif type(S) is Model:
       x, y, z = S.pos
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
@@ -670,10 +749,12 @@ class MainApp(QMainWindow):
     self.selEdit.update()
 
   def select(self, obj):
+    '''Selects an object for editing'''
     self.selected = obj
     self.updateSelEdit()
 
   def update(self):
+    '''Overload: update to display correct features'''
     self.updateCamEdit()
     self.updateSelEdit()
     super().update()

@@ -15,11 +15,12 @@ def demo(app):
   from assetloader import Mesh, Tex
   from engine import Model, Light
   from rotpoint import Rot, Point
-  icosMesh = Mesh("./assets/meshes/texicosahedron.obj", name="20f solid")
-  cubeMesh = Mesh("./assets/meshes/cube.obj", name="6f solid")
-  teapotMesh = Mesh("./assets/meshes/teapot.obj", name="3-D Hello World")
-  abstractTex = Tex("./assets/textures/abstract.jpg", name="abstract")
-  metalTex = Tex("./assets/textures/metal.jpg", name="metal")
+  from gui import R
+  icosMesh = R.loadMesh("./assets/meshes/texicosahedron.obj", name="20f solid")
+  cubeMesh = R.loadMesh("./assets/meshes/cube.obj", name="6f solid")
+  teapotMesh = R.loadMesh("./assets/meshes/teapot.obj", name="3-D Hello World")
+  abstractTex = R.loadTexture("./assets/textures/abstract.jpg", name="abstract")
+  metalTex = R.loadTexture("./assets/textures/metal.jpg", name="metal")
   app.addAsset(icosMesh)
   app.addAsset(cubeMesh)
   app.addAsset(teapotMesh)
@@ -31,6 +32,10 @@ def demo(app):
   app.addRend(icos)
   app.addRend(floor)
   app.addRend(teapot)
+  app.logEntry("Info", "Focus on display and use WASDRF and arrows to control camera.")
+  app.logEntry("Info", "Both images and .obj files are loadable as meshed and textures respectively.")
+  app.logEntry("Info", "All environment objects are deletable (hotkey Delete) and editable.")
+  app.logEntry("Info", "Please report all bugs to https://github.com/Lax125/renderer/issues")
 
 def main(*args, **kwargs):
   '''Runs the main graphical application.'''
@@ -39,7 +44,7 @@ def main(*args, **kwargs):
   demo(app)
   sys.exit(window.exec_())
 
-if __name__ == "__main__":
+if __name__ == "__main__": # MAIN ENTRY POINT
   try:
     main()
   except Exception as e:

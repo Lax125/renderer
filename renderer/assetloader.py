@@ -21,18 +21,20 @@ import numpy as np
 from itertools import chain
 
 def id_gen(start=1):
+    '''Generator that yields consecutive numbers'''
     next_id = start
     while True:
         yield next_id
         next_id += 1
 
 def gentexcoord(f):
+    '''Generates texcoord for missing texcoord vertices--UNUSED'''
     X = (sin(f*tau)+1)/2
     Y = (cos(f*tau)+1)/2
     return (X, Y)
 
 def load_texture(filename):
-    """This function will return the id for the texture"""
+    '''Returns the id for the texture'''
     textureSurface = im.load(filename)
     textureData = im.tostring(textureSurface,"RGBA",1)
     width = textureSurface.get_width()
@@ -118,7 +120,7 @@ class Mesh(Asset):
         
         self.vertices = [(0.0, 0.0, 0.0)] # 1-indexing
         self.texcoords = [(0.0, 0.0)] # 1-indexing, accounts for no-texcoord polygons
-        self.normals = [(0.0, 0.0, 1.0)] # 1-indexing, accounts for no-normal polygons
+        self.normals = [(0.0, 0.0, 1.0)] # 1-indexing
         self.edges = set()
         self.tri_faces = []
         self.quad_faces = []
@@ -132,6 +134,7 @@ class Mesh(Asset):
         self.vbo_buffers = []
 
     def _load(self):
+        '''Load from .obj file'''
         filename = self.filename
         f = open(filename)
         for line in f:
@@ -182,6 +185,7 @@ class Mesh(Asset):
         self._gen_vbo_buffers()
 
     def _gen_normals(self):
+        '''Generate missing normal vectors'''
         for face in chain(self.tri_faces, self.quad_faces, self.poly_faces):
             if face[0][2] != 0:
                 continue
@@ -202,6 +206,7 @@ class Mesh(Asset):
             
 
     def _gen_vbo_arrays(self):
+        '''Generate VBO arrays'''
         # TRIS
         for face in chain(self.tri_faces, self.quad_faces, self.poly_faces):
             di = self.vbo_bufferlen
@@ -216,6 +221,7 @@ class Mesh(Asset):
             self.vbo_bufferlen += N_v
 
     def _gen_vbo_buffers(self):
+        '''Make buffers from VBO arrays'''
         # vertices, texcoords, normals, indices for tris
         buffers = glGenBuffers(4)
 
@@ -319,6 +325,7 @@ class Mesh(Asset):
         glDisable(GL_CULL_FACE)
 
     def delete(self):
+        '''Unload self, turning into a cube'''
         self._clear()
         self.filename = r"./assets/meshes/cube.obj"
         self.name = None

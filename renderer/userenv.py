@@ -13,11 +13,12 @@ Describes user environment class that contains:
 from engine import Scene, Camera
 
 class UserEnv:
-  def __init__(self, assets=set(), scene=Scene(), camera=Camera()):
+  '''A user environment describes everything about the state of the application to be saved.'''
+  def __init__(self, assets=set(), scene=Scene(), camera=Camera(), focus=None):
     self.assets = assets
     self.scene = scene
     self.camera = camera
-    self.focus = None
+    self.focus = focus
 
   def __str__(self):
     return '''[[User Environment]]
