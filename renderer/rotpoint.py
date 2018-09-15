@@ -128,9 +128,12 @@ class Rot(Tuple3f):
     rx, ry, rz = self
     return Rot(-rx, -ry, -rz)
 
-  def get_transmat(self):
+  def get_transmat(self, invert=False):
     '''Get transformation matrix of Rot object'''
     rx, ry, rz = self
+    if invert:
+      ry = -ry
+      rz = -rz
     x_rm = np.matrix([[1, 0,        0      ],
                       [0, cos(rx), -sin(rx)],
                       [0, sin(rx),  cos(rx)]
@@ -143,16 +146,17 @@ class Rot(Tuple3f):
                       [sin(rz),  cos(rz), 0],
                       [0,        0,       1]
                       ])
-    #------YAW----PITCH--ROLL
-    return y_rm * x_rm * z_rm
+    if invert:
+      return y_rm * x_rm * z_rm
+    return z_rm * x_rm * y_rm
 
-  def get_forward_vector(self):
+  def get_forward_vector(self, invert=False):
     '''Forward is originally negative z'''
-    return self * Point(0, 0, -1)
+    return self.get_transmat(invert=invert) * Point(0, 0, -1)
 
-  def get_upward_vector(self):
+  def get_upward_vector(self, invert=False):
     '''Upward is originally positive y'''
-    return self * Point(0, 1, 0)
+    return self.get_transmat(invert=invert) * Point(0, 1, 0)
 
 
 if __name__ == "__main__":

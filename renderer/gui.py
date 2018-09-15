@@ -7,6 +7,7 @@ Makes the graphical application and runs the main systems
 '''
 
 import sys, os
+import time
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -21,6 +22,7 @@ from assetloader import Asset, Mesh, Tex
 from engine import Renderable, Model, Light, initEngine
 from userenv import UserEnv
 from remote import Remote
+from saver import Saver
 
 from math import ceil, pi
 from time import gmtime, strftime
@@ -32,9 +34,6 @@ def cyclamp(x, R): # Like modulo, but based on cutom range
 
 def getTimestamp():
   return strftime("UTC %y-%m-%d %H:%M:%S", gmtime())
-
-UE = UserEnv()
-R = Remote(UE)
 
 ROT_DELTAS = {Qt.Key_Left: (0, -2, 0),
               Qt.Key_Right: (0, 2, 0),
@@ -80,12 +79,14 @@ class glWidget(QGLWidget):
     self.parent = parent
     self.dims = (100, 100)
     self.aspect = 1.0
-    self.refresh_rate = 30
+    self.refresh_rate = 60
     self.refresh_period = ceil(1000/self.refresh_rate)
     self.timer = QTimer()
     self.timer.setInterval(self.refresh_period)
     self.timer.timeout.connect(self.onTick)
     self.heldKeys = set()
+    self.lastt = time.time()
+    self.dt = 0
     self.timer.start()
     self.setFocusPolicy(Qt.StrongFocus)
 
@@ -93,12 +94,12 @@ class glWidget(QGLWidget):
     if not glWidget.engine_initialised:
       glWidget.engine_initialised = True
       initEngine()
-    R.renderScene(aspect=self.aspect)
+    self.parent.R.renderScene(aspect=self.aspect)
 
   def resizeGL(self, w, h):
     self.dims = w, h
     self.aspect = w/h
-    R.resizeViewport(w,h)
+    self.parent.R.resizeViewport(w,h)
     QGLWidget.resizeGL(self, w, h)
 
   def keyPressEvent(self, event):
@@ -108,23 +109,24 @@ class glWidget(QGLWidget):
     self.heldKeys.discard(event.key())
 
   def onTick(self): # custom: scheduled to call at regular intervals
+    now = time.time()
+    self.dt = now - self.lastt
+    self.lastt = now
     self.handleHeldKeys()
     self.update()
 
   def handleHeldKeys(self):
     if len(self.heldKeys) == 0:
       return
-    dt = (self.refresh_period/1000)
+    dt = self.dt
     for k, (drx, dry, drz) in ROT_DELTAS.items():
       if k in self.heldKeys:
-        R.changeCameraRot(dt*drx, dt*dry, dt*drz)
+        self.parent.R.changeCameraRot(dt*drx, dt*dry, dt*drz)
 
     for k, (dx, dy, dz) in POS_DELTAS.items():
       if k in self.heldKeys:
-        rx, ry, rz = UE.camera.rot
-        defacto_drot = Rot(rx, -ry, -rz)
-        dp = dt * defacto_drot.get_transmat() * Point(dx, dy, dz)
-        R.moveCamera(*dp)
+        dp = dt * self.parent.UE.camera.rot.get_transmat(invert=True) * Point(dx, dy, dz)
+        self.parent.R.moveCamera(*dp)
 
     self.parent.update()
 
@@ -148,7 +150,7 @@ class AssetList(QListWidget):
     return new_item
 
   def remove(self, item):
-    R.delAsset(item.asset)
+    self.parent.R.delAsset(item.asset)
     self.takeItem(self.row(item))
 
   def keyPressEvent(self, event):
@@ -167,7 +169,7 @@ class RendList(QListWidget):
     self.itemClicked.connect(self.onItemClicked)
 
   def onItemClicked(self, item):
-    R.setFocus(item.rend)
+    self.parent.R.setFocus(item.rend)
     self.parent.select(item.rend)
 
   def add(self, rend):
@@ -178,7 +180,7 @@ class RendList(QListWidget):
     return new_item
 
   def remove(self, item):
-    R.delRend(item.rend)
+    self.parent.R.delRend(item.rend)
     self.takeItem(self.row(item))
 
   def keyPressEvent(self, event):
@@ -246,12 +248,16 @@ class VerticalScrollArea(QScrollArea):
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
   def __init__(self, parent=None):
-    super().__init__(parent)
     self.selected = None
+    self.UE = UserEnv()
+    self.R = Remote(self.UE)
+
+    super().__init__(parent)
     self._make_widgets()
     self.resize(1000, 500)
     self.setWindowTitle("Renderer")
     self.show()
+    self.S = Saver(self)
 
   def _make_widgets(self):
     '''Initialise all widgets'''
@@ -369,31 +375,51 @@ class MainApp(QMainWindow):
     
   def addAsset(self, asset):
     '''Adds Asset object into scene and QListWidget'''
-    if R.addAsset(asset): # asset already in user environment
+    if self.R.addAsset(asset): # asset already in user environment
       return
     self.addEnvObj(asset)
       
   def addRend(self, rend):
     '''Adds Renderable object into userenv and QListWidget'''
-    if R.addRend(rend): # renderable already in the scene
+    if self.R.addRend(rend): # renderable already in the scene
       return
     self.addEnvObj(rend)
 
-  def newProject(self):
+  def newProject(self, silent=False):
     '''Clear user environment and QListWidgets'''
     self.clearLists()
-    R.new()
+    self.R.new()
     self.selected = None
-    self.logEntry("Success", "Initialised new project.")
+    if not silent:
+      self.logEntry("Success", "Initialised new project.")
     self.update()
 
   def saveProject(self): # TODO
-    '''Prompt to save project--NOT IMPLEMENTED'''
-    pass
+    '''Prompt to save project'''
+    fd = QFileDialog()
+    fd.setAcceptMode(QFileDialog.AcceptSave)
+    fd.setFileMode(QFileDialog.AnyFile)
+    fd.setNameFilters(["3-D Project (*.3dproj)"])
+    if fd.exec_():
+      fn = fd.selectedFiles()[0]
+      self.S.save(fn)
+      self.logEntry("Success", "Saved project to %s"%fn)
 
   def openProject(self): # TODO
-    '''Prompt to open project--NOT IMPLEMENTED'''
-    pass
+    '''Prompt to open project'''
+    fd = QFileDialog()
+    fd.setAcceptMode(QFileDialog.AcceptOpen)
+    fd.setFileMode(QFileDialog.ExistingFile)
+    fd.setNameFilters(["3-D Project (*.3dproj)", "Any File (*.*)"])
+    if fd.exec_():
+      fn = fd.selectedFiles()[0]
+      self.newProject(silent=True)
+      try:
+        self.S.load(fn)
+      except IOError:
+        self.logEntry("Error", "Unable to fully load from %s"%fn)
+      else:
+        self.logEntry("Success", "Fully loaded from %s"%fn)
 
   def loadMeshes(self):
     '''Prompt to load mesh files'''
@@ -404,7 +430,7 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         try:
-          self.addAsset(R.loadMesh(fn))
+          self.addAsset(self.R.loadMesh(fn))
         except:
           self.logEntry("Error", "Bad mesh file: %s"%fn)
         else:
@@ -419,7 +445,7 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         try:
-          self.addAsset(R.loadTexture(fn))
+          self.addAsset(self.R.loadTexture(fn))
         except:
           self.logEntry("Error", "Bad image file: %s"%fn)
         else:
@@ -620,6 +646,7 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Yaw", ry)
     poseLayout.addRow("Pitch", rx)
     poseLayout.addRow("Roll", rz)
+    poseLayout.addRow("Scale", scale)
 
     matBox = QGroupBox("Material")
     L.addWidget(matBox)
@@ -639,10 +666,10 @@ class MainApp(QMainWindow):
 
   def updateCamEdit(self): # true settings -> displayed settings
     '''Updates the displayed settings for the camera'''
-    x, y, z = UE.camera.pos
-    rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in UE.camera.rot)
-    fovy = UE.camera.fovy
-    zoom = UE.camera.zoom
+    x, y, z = self.UE.camera.pos
+    rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in self.UE.camera.rot)
+    fovy = self.UE.camera.fovy
+    zoom = self.UE.camera.zoom
     for setting, var in [(self.camEdit_x, x),
                          (self.camEdit_y, y),
                          (self.camEdit_z, z),
@@ -666,7 +693,7 @@ class MainApp(QMainWindow):
               pi*self.camEdit_rz.value()/180)
     fovy = self.camEdit_fovy.value()
     zoom = self.camEdit_zoom.value()
-    R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
+    self.R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
 
   def reinitSelected(self):
     '''Prompts user to reinitialise the selected object from different files/assets'''
@@ -762,5 +789,11 @@ class MainApp(QMainWindow):
 if __name__ == "__main__":
   window = QApplication(sys.argv)
   app = MainApp()
-  sys.exit(window.exec_())
+  def tryexec():
+    try:
+      return window.exec_()
+    except Exception as e:
+      print(e)
+      return 1
+  sys.exit(tryexec())
 

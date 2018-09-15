@@ -22,7 +22,6 @@ class Remote:
   '''A remote to control a user environment with methods.'''
   def __init__(self, userenv):
     self.userenv = userenv # should be clear for saving
-    self.saver = saver.Saver(userenv, self)
 
   def new(self):
     '''New project'''

@@ -15,12 +15,11 @@ def demo(app):
   from assetloader import Mesh, Tex
   from engine import Model, Light
   from rotpoint import Rot, Point
-  from gui import R
-  icosMesh = R.loadMesh("./assets/meshes/texicosahedron.obj", name="20f solid")
-  cubeMesh = R.loadMesh("./assets/meshes/cube.obj", name="6f solid")
-  teapotMesh = R.loadMesh("./assets/meshes/teapot.obj", name="3-D Hello World")
-  abstractTex = R.loadTexture("./assets/textures/abstract.jpg", name="abstract")
-  metalTex = R.loadTexture("./assets/textures/metal.jpg", name="metal")
+  icosMesh = app.R.loadMesh("./assets/meshes/texicosahedron.obj", name="20f solid")
+  cubeMesh = app.R.loadMesh("./assets/meshes/cube.obj", name="6f solid")
+  teapotMesh = app.R.loadMesh("./assets/meshes/teapot.obj", name="3-D Hello World")
+  abstractTex = app.R.loadTexture("./assets/textures/abstract.jpg", name="abstract")
+  metalTex = app.R.loadTexture("./assets/textures/metal.jpg", name="metal")
   app.addAsset(icosMesh)
   app.addAsset(cubeMesh)
   app.addAsset(teapotMesh)

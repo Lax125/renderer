@@ -77,20 +77,20 @@ class Renderable:
 class Model(Renderable):
   '''Describes polyhedron-like 3-D model in a position and orientation'''
   
-  def __init__(self, obj, tex, shininess=0.0, *args, **kwargs):
-    '''Initialise 3-D model from loaded obj and texture files with position pos, rotation rot, and scale scale'''
-    self.obj = obj
+  def __init__(self, mesh, tex, shininess=0.0, *args, **kwargs):
+    '''Initialise 3-D model from loaded mesh and texture files with position pos, rotation rot, and scale scale'''
+    self.mesh = mesh
     self.tex = tex
     self.shininess = shininess
     super().__init__(*args, **kwargs)
 
   def __repr__(self):
-    reprtuple = (repr(self.obj), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale))
+    reprtuple = (repr(self.mesh), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale))
     return "Model(%s, %s, pos=%s, rot=%s, scale=%s)"%reprtuple
 
   def render(self):
     if self.visible:
-      self.obj.render(self.tex)
+      self.mesh.render(self.tex)
 
 class Light(Renderable):
   pass #TODO
@@ -103,6 +103,9 @@ class Scene:
     self.rends = set()
     for rend in rends:
       self.add(rend)
+
+  def __iter__(self):
+    return self.rends.__iter__()
 
   def add(self, rend):
     self.rends.add(rend)
@@ -137,9 +140,7 @@ class Scene:
     glLoadIdentity()
     defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
     gluPerspective(defacto_fovy, aspect, *camera.zRange)
-    rx, ry, rz = camera.rot
-    defacto_rot = Rot(rx, -ry, -rz)
-    gluLookAt(0,0,0, *defacto_rot.get_forward_vector(), *defacto_rot.get_upward_vector())
+    gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
     glTranslatef(*-camera.pos)
     glPushMatrix()
     
@@ -166,10 +167,10 @@ def initEngine(): # only call once context has been established
   glEnable(GL_NORMALIZE)
   glEnable(GL_POLYGON_SMOOTH)
   glEnable(GL_DITHER)
-##  glEnable(GL_FOG)
-##  glFogi(GL_FOG_MODE, GL_EXP)
-##  glFogf(GL_FOG_END, 1000.0)
-##  glFogf(GL_FOG_DENSITY, 0.1)
+  glEnable(GL_FOG)
+  glFogi(GL_FOG_MODE, GL_EXP)
+  glFogf(GL_FOG_END, 1000.0)
+  glFogf(GL_FOG_DENSITY, 0.1)
     
 
 if __name__ == "__main__":
