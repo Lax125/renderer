@@ -8,6 +8,7 @@ Makes the graphical application and runs the main systems
 
 import sys, os
 import time
+import numpy as np
 
 from OpenGL.GL import *
 from OpenGL.GLU import *
@@ -27,6 +28,7 @@ from saver import Saver
 from math import ceil, pi
 from time import gmtime, strftime
 from copy import deepcopy
+from PIL import Image
 
 def cyclamp(x, R): # Like modulo, but based on cutom range
   a, b = R
@@ -272,6 +274,8 @@ class MainApp(QMainWindow):
     file.addSeparator()
     file.addAction("Load meshes", self.loadMeshes)
     file.addAction("Load textures", self.loadTextures)
+    file.addSeparator()
+    file.addAction("Export image", self.exportImage)
     scene = bar.addMenu("Scene")
     scene.addAction("Make models", self.makeModels)
     scene.addAction("Make lights", self.makeLights)
@@ -280,7 +284,8 @@ class MainApp(QMainWindow):
     view.addAction("Show Edit", self.showEdit)
     view.addAction("Show Log", self.showLog)
 
-    self.setCentralWidget(glWidget(self))
+    self.gl = glWidget(self)
+    self.setCentralWidget(self.gl)
     
     self.envPane = QDockWidget("Environment", self)
     self.envPane.setFeatures(QDockWidget.DockWidgetMovable|
@@ -450,6 +455,67 @@ class MainApp(QMainWindow):
           self.logEntry("Error", "Bad image file: %s"%fn)
         else:
           self.logEntry("Success", "Loaded texture from %s"%fn)
+
+  def exportImage(self):
+    '''Prompt to export image in a size'''
+    M = Modal(self)
+    M.setWindowTitle("Export Image")
+    layout = QGridLayout()
+    M.setLayout(layout)
+
+    current_dims = self.gl.dims
+
+    # DIMENSIONS GROUP BOX
+    dimBox = QGroupBox("Dimensions")
+    layout.addWidget(dimBox, 0,0, 1,1)
+    dimLayout = QFormLayout()
+    dimBox.setLayout(dimLayout)
+    width = QSpinBox(minimum=1, maximum=10000)
+    width.setValue(current_dims[0])
+    height = QSpinBox(minimum=1, maximum=10000)
+    height.setValue(current_dims[1])
+    dimLayout.addRow("Width", width)
+    dimLayout.addRow("height", height)
+
+    # CONFIRMATION BUTTON
+    export = QPushButton(text="Export")
+    layout.addWidget(export, 1,0, 1,1)
+
+    def tryExport():
+      w, h = width.value(), height.value()
+      self.gl.resizeGL(w, h)
+      self.gl.paintGL()
+      pixels = glReadPixels(0,0, w,h, GL_RGBA, GL_UNSIGNED_BYTE)
+      self.gl.resizeGL(*current_dims)
+      self.gl.paintGL()
+      # left-to-right, bottom-to-top 2-D byte data
+      # ---3--->
+      # ---2--->
+      # ---1--->
+      # ---0--->
+      # needs to be flipped top to bottom at the end to
+      # conform to PIL's standard:
+      # ---0--->
+      # ---1--->
+      # ---2--->
+      # ---3--->
+
+      im = Image.frombytes("RGBA", (w, h), pixels).transpose(Image.FLIP_TOP_BOTTOM)
+      fd = QFileDialog()
+      fd.setAcceptMode(QFileDialog.AcceptSave)
+      fd.setFileMode(QFileDialog.AnyFile)
+      fd.setNameFilters(["PNG Image (*.png)"])
+      if fd.exec_():
+        fn = fd.selectedFiles()[0]
+        try:
+          im.save(fn, "PNG")
+        except:
+          self.logEntry("Error", "Could not export image to %s"%fn)
+        else:
+          self.logEntry("Success", "Exported image to %s"%fn)
+
+    export.clicked.connect(tryExport)
+    M.exec_()
 
   def makeModels(self):
     '''Shows modal for making models'''
@@ -785,6 +851,10 @@ class MainApp(QMainWindow):
     self.updateCamEdit()
     self.updateSelEdit()
     super().update()
+
+  def closeEvent(self, event):
+    self.S.update()
+    print("Goodbye!")
 
 if __name__ == "__main__":
   window = QApplication(sys.argv)
