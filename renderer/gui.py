@@ -475,7 +475,7 @@ class MainApp(QMainWindow):
     height = QSpinBox(minimum=1, maximum=10000)
     height.setValue(current_dims[1])
     dimLayout.addRow("Width", width)
-    dimLayout.addRow("height", height)
+    dimLayout.addRow("Height", height)
 
     # CONFIRMATION BUTTON
     export = QPushButton(text="Export")
@@ -483,10 +483,11 @@ class MainApp(QMainWindow):
 
     def tryExport():
       w, h = width.value(), height.value()
-      self.gl.resizeGL(w, h)
+      # Yes, resize the ACTUAL gl widget. This is the only way.
+      self.gl.resize(w, h) # It won't show up anyway.
       self.gl.paintGL()
       pixels = glReadPixels(0,0, w,h, GL_RGBA, GL_UNSIGNED_BYTE)
-      self.gl.resizeGL(*current_dims)
+      self.gl.resize(*current_dims)
       self.gl.paintGL()
       # left-to-right, bottom-to-top 2-D byte data
       # ---3--->
