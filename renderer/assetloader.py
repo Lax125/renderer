@@ -13,12 +13,16 @@ thanks edward344!
 '''
 import sys, os
 
-import pygame.image as im
+from PIL import Image
 from OpenGL.GL import *
 from math import sin, cos, tau
 import ctypes
 import numpy as np
 from itertools import chain
+
+from PIL.ImageQt import ImageQt
+from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QImage
 
 def id_gen(start=1):
     '''Generator that yields consecutive numbers'''
@@ -35,16 +39,30 @@ def gentexcoord(f):
 
 def load_texture(filename):
     '''Returns the id for the texture'''
-    textureSurface = im.load(filename)
-    textureData = im.tostring(textureSurface,"RGBA",1)
-    width = textureSurface.get_width()
-    height = textureSurface.get_height()
+    textureSurface = Image.open(filename).convert("RGBA")
+    textureData = textureSurface.tobytes("raw")
+    IM = Image.frombytes("RGBA", textureSurface.size, textureData)
+    width, height = textureSurface.size
     ID = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D,ID)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,width,height,0,GL_RGBA,GL_UNSIGNED_BYTE,textureData)
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,width,height,
+                 0,GL_RGBA,GL_UNSIGNED_BYTE,textureData)
     return ID
+
+def load_thumbnail(filename):
+    im = Image.open(filename)
+    return im.resize((150, 150))
+
+def im2pixmap(im):
+    qim = ImageQt(im)
+    pixmap = QPixmap.fromImage(qim)
+    return pixmap
+
+def im2qim(im):
+    qim = ImageQt(im)
+    return qim
 
 class Asset:
     def __init__(self, filename, name="asset0"):
@@ -74,6 +92,8 @@ class Tex(Asset):
         if name is None:
             name = os.path.basename(filename)
         self.name = name
+        self.thumbnail = None
+        self.thumbnailQt = None
         self._load()
         Tex.texDict[self.ID] = self
 
@@ -83,6 +103,8 @@ class Tex(Asset):
 
     def _load(self):
         self.texID = load_texture(self.filename)
+        self.thumbnail = load_thumbnail(self.filename) # 100x100 res
+        self.thumbnailQt = im2qim(self.thumbnail)
 
     def delete(self):
         self.deleted = True
@@ -95,12 +117,13 @@ class Tex(Asset):
 class Mesh(Asset):
     IDs = id_gen(1)
     meshDict = dict()
-    def __init__(self, filename, name=None, ID=0):
+    def __init__(self, filename, name=None, cullbackface=True, ID=0):
         if ID == 0:
             ID = next(Mesh.IDs)
         self.ID = ID
         self._clear()
         self.filename = filename
+        self.cullbackface = cullbackface
         if name is None:
             name = os.path.basename(filename)
         self.name = name
@@ -327,7 +350,7 @@ class Mesh(Asset):
     def delete(self):
         '''Unload self, turning into a cube'''
         self._clear()
-        self.filename = r"./assets/meshes/cube.obj"
+        self.filename = r"./assets/meshes/_default.obj"
         self.name = None
         self._load()
         self.deleted = True

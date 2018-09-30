@@ -15,6 +15,7 @@ def demo(app):
   from assetloader import Mesh, Tex
   from engine import Model, Light
   from rotpoint import Rot, Point
+  app.newProject()
   icosMesh = app.R.loadMesh("./assets/meshes/texicosahedron.obj", name="20f solid")
   cubeMesh = app.R.loadMesh("./assets/meshes/cube.obj", name="6f solid")
   teapotMesh = app.R.loadMesh("./assets/meshes/teapot.obj", name="3-D Hello World")
@@ -35,6 +36,7 @@ def demo(app):
   app.logEntry("Info", "Both images and .obj files are loadable as meshed and textures respectively.")
   app.logEntry("Info", "All environment objects are deletable (hotkey Delete) and editable.")
   app.logEntry("Info", "Please report all bugs to https://github.com/Lax125/renderer/issues")
+  app.logEntry("Warning", "Please don't tamper with AppData/Roaming/Renderer. This kills the app.")
 
 def main(*args, **kwargs):
   '''Runs the main graphical application.'''

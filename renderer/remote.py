@@ -15,6 +15,7 @@ from OpenGL.GL import glViewport
 from appdata import *
 from PIL import Image
 import saver
+import shutil
 
 datainit()
 
@@ -38,7 +39,10 @@ class Remote:
   def loadMesh(self, fn, *args, **kwargs):
     '''Load a mesh into a Mesh object and an appdata file'''
     new_mesh = Mesh(fn, *args, **kwargs)
-    dataclone(fn, "save/assets/meshes/%d.obj"%new_mesh.ID)
+    try:
+      dataclone(fn, "save/assets/meshes/%d.obj"%new_mesh.ID)
+    except:
+      pass
     return new_mesh
 
   def loadTexture(self, fn, *args, **kwargs):
@@ -132,5 +136,12 @@ class Remote:
     UE.camera = Camera()
     UE.scene = Scene()
     UE.assets.clear()
+    try:
+      shutil.rmtree(datapath("save/assets/meshes"))
+      shutil.rmtree(datapath("save/assets/textures"))
+      os.mkdir(datapath("save/assets/meshes"))
+      os.mkdir(datapath("save/assets/textures"))
+    except:
+      pass
 
   

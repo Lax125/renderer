@@ -171,8 +171,7 @@ def initEngine(): # only call once context has been established
   glFogi(GL_FOG_MODE, GL_EXP)
   glFogf(GL_FOG_END, 1000.0)
   glFogf(GL_FOG_DENSITY, 0.1)
-    
-
+  
 if __name__ == "__main__":
   print("Hello, engine?")
   print("Engine BROKE.")
