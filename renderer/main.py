@@ -42,7 +42,7 @@ def main(*args, **kwargs):
   '''Runs the main graphical application.'''
   window = QApplication(sys.argv)
   app = MainApp()
-  demo(app)
+  app.restoreProject()
   sys.exit(window.exec_())
 
 if __name__ == "__main__": # MAIN ENTRY POINT
