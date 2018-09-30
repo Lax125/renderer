@@ -417,6 +417,7 @@ class MainApp(QMainWindow):
     quickShortcut("Ctrl+O", self.openProject)
     quickShortcut("Ctrl+S", self.saveProject)
     quickShortcut("Ctrl+Shift+S", self.saveasProject)
+    quickShortcut("Ctrl+E", self.exportImage)
     
   
   def showEnv(self):
