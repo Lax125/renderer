@@ -342,6 +342,7 @@ class MainApp(QMainWindow):
     file.addAction("New project", self.newProject)
     file.addAction("Open project", self.openProject)
     file.addAction("Save project", self.saveProject)
+    file.addAction("Save project as...", self.saveasProject)
     file.addSeparator()
     file.addAction("Load meshes", self.loadMeshes)
     file.addAction("Load textures", self.loadTextures)
