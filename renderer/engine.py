@@ -5,16 +5,7 @@ describes 3-D scenes and it's rendering process
 with the help of OpenGL
 '''
 
-# BASIC IMPORTS
-import sys, os
-import logging
-import numpy as np
-from math import sin, cos, tan, atan, atan2, pi, tau, degrees, radians
-
-# FOR BUFFER CALCULATION
-import OpenGL
-from OpenGL.GL import *
-from OpenGL.GLU import *
+from init import *
 
 # CUSTOM SCRIPTS FOR:
 #   - DESCRIBING POSITIONS IN 3-D AND ROTATIONAL ORIENTATION
@@ -77,11 +68,10 @@ class Renderable:
 class Model(Renderable):
   '''Describes polyhedron-like 3-D model in a position and orientation'''
   
-  def __init__(self, mesh, tex, shininess=0.0, *args, **kwargs):
+  def __init__(self, mesh, tex, *args, **kwargs):
     '''Initialise 3-D model from loaded mesh and texture files with position pos, rotation rot, and scale scale'''
     self.mesh = mesh
     self.tex = tex
-    self.shininess = shininess
     super().__init__(*args, **kwargs)
 
   def __repr__(self):
@@ -158,7 +148,13 @@ class Scene:
     # Pop camera matrix from stack. Net change in stack: 0
     glPopMatrix()
 
+initialised = False
+
 def initEngine(): # only call once context has been established
+  global initialised
+  if initialised:
+    return
+  
   shader.init()
 
   # Enable wanted gl modes
@@ -171,6 +167,8 @@ def initEngine(): # only call once context has been established
   glFogi(GL_FOG_MODE, GL_EXP)
   glFogf(GL_FOG_END, 1000.0)
   glFogf(GL_FOG_DENSITY, 0.1)
+  
+  initialised = True
   
 if __name__ == "__main__":
   print("Hello, engine?")

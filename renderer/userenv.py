@@ -3,13 +3,11 @@
 userenv.py
 
 Describes user environment class that contains:
-  - IDs of loaded textures
+  - Loaded texture objects
   - Loaded model objects
   - The scene to render
-"EVERYONE IS HERE."
-*SMASH BROS ULTIMATE THEME STARTS PLAYING*
 '''
-
+from init import *
 from engine import Scene, Camera
 
 class UserEnv:

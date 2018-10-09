@@ -8,8 +8,7 @@ However, his words had no effect.
 He forgot to add a shader.
 '''
 
-from OpenGL.GL import *
-from OpenGL.GL import shaders
+from init import *
 
 VSHADER_BASIC = open("vshader_basic.cpp").read()
 FSHADER_BASIC = open("fshader_basic.cpp").read()

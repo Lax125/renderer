@@ -5,17 +5,13 @@ remote.py
 All user-friendly functions to modify a UserEnv go here.
 
 '''
-import sys, os
+from init import *
 
 from rotpoint import Rot, Point
-from assetloader import Mesh, Tex
-from engine import Model, Camera, Scene
-from math import radians
-from OpenGL.GL import glViewport
+from assetloader import Asset, Mesh, Tex
+from engine import Renderable, Model, Light, Camera, Scene
 from appdata import *
-from PIL import Image
 import saver
-import shutil
 
 datainit()
 
@@ -58,16 +54,18 @@ class Remote:
     self.userenv.assets.add(asset)
     return has_asset
 
-  def delAsset(self, asset, rmpointer=True):
+  def delAsset(self, asset):
     '''Delete an asset from both its appdata location and userenv and unload it'''
     if type(asset) is Mesh:
       fn = "save/assets/meshes/%d.obj"%asset.ID
     elif type(asset) is Tex:
       fn = "save/assets/textures/%d.png"%asset.ID
-    datarm(fn)
+    try:
+      datarm(fn)
+    except:
+      pass
     asset.delete()
-    if rmpointer:
-      self.userenv.assets.discard(asset)
+    self.userenv.assets.discard(asset)
 
   def addRend(self, rend):
     '''Adds rend into userenv's scene'''
@@ -78,6 +76,18 @@ class Remote:
   def delRend(self, rend):
     '''Deletes rend from userenv's scene'''
     self.userenv.scene.discard(rend)
+
+  def add(self, obj):
+    if isinstance(obj, Asset):
+      return self.addAsset(obj)
+    elif isinstance(obj, Renderable):
+      return self.addRend(obj)
+
+  def delete(self, obj):
+    if isinstance(obj, Asset):
+      self.delAsset(obj)
+    elif isinstance(obj, Renderable):
+      self.delRend(obj)
 
   def configModel(self, model, mesh=None, tex=None, pos=None, rot=None, scale=None, name=None):
     '''Configures Model object's assets, position, rotation, scale, and name'''
@@ -121,7 +131,10 @@ class Remote:
 
   def renderScene(self, aspect=1.33):
     '''Renders the scene into the OpenGL view buffer'''
-    self.userenv.scene.render(self.userenv.camera, aspect=aspect)
+    try:
+      self.userenv.scene.render(self.userenv.camera, aspect=aspect)
+    except Exception as e:
+      print(e)
 
   def getContextRes(self):
     '''Returns resolution of context'''
@@ -130,8 +143,8 @@ class Remote:
   def clearUserEnv(self):
     '''Clears user environment to a clean slate'''
     UE = self.userenv
-    for asset in UE.assets:
-      self.delAsset(asset, rmpointer = False)
+    for asset in list(UE.assets):
+      self.delAsset(asset)
     UE.focus = None
     UE.camera = Camera()
     UE.scene = Scene()

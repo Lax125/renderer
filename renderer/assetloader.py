@@ -11,18 +11,7 @@ changes:
 
 thanks edward344!
 '''
-import sys, os
-
-from PIL import Image
-from OpenGL.GL import *
-from math import sin, cos, tau
-import ctypes
-import numpy as np
-from itertools import chain
-
-from PIL.ImageQt import ImageQt
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtGui import QImage
+from init import *
 
 def id_gen(start=1):
     '''Generator that yields consecutive numbers'''

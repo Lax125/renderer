@@ -1,0 +1,10 @@
+QListWidget {
+	background: #444444;
+}
+
+QTabWidget {
+	qproperty-iconSize: 30px;
+	font-size: 0px;
+}
+
+QTabBar::tab {height:50px; width:63px;}

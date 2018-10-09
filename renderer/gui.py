@@ -6,17 +6,7 @@ gui.py
 Makes the graphical application and runs the main systems
 '''
 
-import sys, os
-import time
-import numpy as np
-
-from OpenGL.GL import *
-from OpenGL.GLU import *
-
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
-from PyQt5.QtOpenGL import *
+from init import *
 
 from rotpoint import Rot, Point
 from assetloader import Asset, Mesh, Tex
@@ -24,11 +14,6 @@ from engine import Renderable, Model, Light, initEngine
 from userenv import UserEnv
 from remote import Remote
 from saver import Saver
-
-from math import ceil, pi
-from time import gmtime, strftime
-from copy import deepcopy
-from PIL import Image
 
 def shortfn(fn):
   return os.path.split(fn)[1]
@@ -54,25 +39,14 @@ POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
               Qt.Key_F: (0, -5, 0),
               Qt.Key_R: (0, 5, 0)}
 
-def copyAssetList(ql):
-  # makes copy of ql
+def copyObjList(ql):
   cql = QListWidget()
   for i in range(ql.count()):
     item = ql.item(i)
     citem = QListWidgetItem()
-    citem.asset = item.asset
-    citem.setText(item.text())
-    cql.addItem(citem)
-  cql.ofind = ql.ofind
-  return cql
-
-def copyRendList(ql):
-  # makes copy of ql
-  cql = QListWidget()
-  for i in range(ql.count()):
-    item = ql.item(i)
-    citem = QListWidgetItem()
-    citem.rend = item.rend
+    citem.obj = item.obj
+    citem.setIcon(item.icon())
+    citem.setBackground(item.background())
     citem.setText(item.text())
     cql.addItem(citem)
   cql.ofind = ql.ofind
@@ -89,10 +63,9 @@ def loadQTable(qtable, arr):
 
 class glWidget(QGLWidget):
   '''OpenGL+QT widget'''
-  engine_initialised = False
-  def __init__(self, parent):
-    QGLWidget.__init__(self, parent)
-    self.parent = parent
+  def __init__(self, *args, **kwargs):
+    QGLWidget.__init__(self, *args, **kwargs)
+    self.parent = self.parentWidget()
     self.dims = (100, 100)
     self.aspect = 1.0
     self.refresh_rate = 60
@@ -105,18 +78,18 @@ class glWidget(QGLWidget):
     self.dt = 0
     self.timer.start()
     self.setFocusPolicy(Qt.StrongFocus)
-  
+
+  def initializeGL(self):
+    initEngine()
+
   def paintGL(self):
-    if not glWidget.engine_initialised:
-      glWidget.engine_initialised = True
-      initEngine()
     self.parent.R.renderScene(aspect=self.aspect)
 
   def resizeGL(self, w, h):
     self.dims = w, h
     self.aspect = w/h
     self.parent.R.resizeViewport(w,h)
-    QGLWidget.resizeGL(self, w, h)
+    super().resizeGL(w, h)
 
   def keyPressEvent(self, event):
     self.heldKeys.add(event.key())
@@ -128,111 +101,67 @@ class glWidget(QGLWidget):
     now = time.time()
     self.dt = now - self.lastt
     self.lastt = now
-    self.handleHeldKeys()
-    self.update()
+    if self.handleHeldKeys():
+      self.glDraw()
 
   def handleHeldKeys(self):
-    if len(self.heldKeys) == 0:
-      return
+    count = 0
     dt = self.dt
     for k, (drx, dry, drz) in ROT_DELTAS.items():
       if k in self.heldKeys:
+        count += 1
         self.parent.R.changeCameraRot(dt*drx, dt*dry, dt*drz)
 
     for k, (dx, dy, dz) in POS_DELTAS.items():
       if k in self.heldKeys:
+        count += 1
         dp = dt * self.parent.UE.camera.rot.get_transmat(invert=True) * Point(dx, dy, dz)
         self.parent.R.moveCamera(*dp)
 
-    self.parent.update()
+    self.parent.updateCamEdit()
+    return count
 
-class AssetList(QListWidget):
-  '''QT Widget: list of rends'''
-  def __init__(self, parent=None):
-    super().__init__(parent)
-    self.parent = parent
+class ObjList(QListWidget):
+  '''QListWidget of environment objects (Mesh, Tex, Model, Light)'''
+  iconDict = dict() # obj type --> icon
+  bgDict = dict() # obj type --> bg brush
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.parent = self.parentWidget()
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
     self.itemClicked.connect(self.onItemClicked)
 
   def onItemClicked(self, item):
-    self.parent.select(item.asset)
+    self.parent.select(item.obj)
 
-  def add(self, asset):
-    new_item = QListWidgetItem()
-    new_item.setText(asset.name)
-    new_item.asset = asset
+  def add(self, obj):
+    new_item = QListWidgetItem(obj.name)
+    new_item.obj = obj
+    if type(obj) in self.iconDict:
+      new_item.setIcon(self.iconDict[type(obj)])
+    if type(obj) in self.bgDict:
+      new_item.setBackground(self.bgDict[type(obj)])
     self.addItem(new_item)
     return new_item
-
-  def remove(self, item):
-    self.parent.R.delAsset(item.asset)
-    self.takeItem(self.row(item))
 
   def keyPressEvent(self, event):
     k = event.key()
     if k == Qt.Key_Delete:
       for item in self.selectedItems():
-        if self.parent.selected is item.asset:
-          self.parent.select(None)
-        self.remove(item)
+        self.parent.delete(item.obj)
       self.parent.update()
 
   def update(self):
     for i in range(self.count()):
       item = self.item(i)
-      item.setText(item.asset.name)
-    super().update()
+      item.setText(item.obj.name)
+##    super().update()
 
-  def ofind(self, asset):
+  def ofind(self, obj):
     for i in range(self.count()):
       item = self.item(i)
-      if item.asset is asset:
-        return i
-
-class RendList(QListWidget):
-  '''QT Widget: list of rends'''
-  def __init__(self, parent=None):
-    super().__init__(parent)
-    self.parent = parent
-    self.setSortingEnabled(True)
-    self.setSelectionMode(3)
-    self.itemClicked.connect(self.onItemClicked)
-
-  def onItemClicked(self, item):
-    self.parent.R.setFocus(item.rend)
-    self.parent.select(item.rend)
-
-  def add(self, rend):
-    new_item = QListWidgetItem()
-    new_item.setText(rend.name)
-    new_item.rend = rend
-    self.addItem(new_item)
-    return new_item
-
-  def remove(self, item):
-    self.parent.R.delRend(item.rend)
-    self.takeItem(self.row(item))
-
-  def keyPressEvent(self, event):
-    k = event.key()
-    if k == Qt.Key_Delete:
-      for item in self.selectedItems():
-        if self.parent.selected is item.rend:
-          self.parent.select(None)
-        self.remove(item)
-      self.parent.update()
-
-  def update(self):
-    for i in range(self.count()):
-      item = self.item(i)
-      item.setText(item.rend.name)
-    super().update()
-
-  def ofind(self, rend):
-    for i in range(self.count()):
-      item = self.item(i)
-      if item.rend is rend:
+      if item.obj is obj:
         return i
 
 class Modal(QDialog):
@@ -243,7 +172,7 @@ class Modal(QDialog):
 
 def YNPrompt(parent, title="YN", text="Do action?"):
   reply = QMessageBox.question(parent, title, text,
-                               QMessageBox.Yes|QMessageBox.No)
+                               QMessageBox.Yes|QMessageBox.No, QMessageBox.Yes)
   return reply == QMessageBox.Yes
 
 class ResizableTabWidget(QTabWidget):
@@ -283,24 +212,24 @@ class VerticalScrollArea(QScrollArea):
   '''A scroll area that scrolls vertically but acts normally horizontally'''
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+##    self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
   def sizeHint(self):
     W = self.widget()
     if W:
-      return QSize(W.sizeHint().width() + self.verticalScrollBar().width(), 0)
+      return QSize(W.sizeHint().width() + self.verticalScrollBar().width()+5, 0)
     return QSize(0, 0)
 
   def minimumSizeHint(self):
     W = self.widget()
     if W:
-      return QSize(W.minimumSizeHint().width() + self.verticalScrollBar().width(), 0)
+      return QSize(W.sizeHint().width() + self.verticalScrollBar().width()+5, 0)
     return QSize(0, 0)
 
-class CenteredVBoxLayout(QVBoxLayout):
-  def addWidget(self, w, *args, **kwargs):
-    super().addWidget(w, *args, **kwargs)
-    self.setAlignment(w, Qt.AlignHCenter)
+def CBrush(hexcolor):
+  qc = QColor()
+  qc.setNamedColor(hexcolor)
+  return QBrush(qc)
 
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
@@ -310,27 +239,66 @@ class MainApp(QMainWindow):
     self.R = Remote(self.UE)
 
     super().__init__(parent)
+    self._init_style()
     self._load_assets()
     self._make_widgets()
     self._init_hotkeys()
     self.resize(1000, 500)
+    self.setWindowIcon(self.icons["Model"])
     self.setWindowTitle("Renderer")
     self.show()
     self.S = Saver(self)
     self.setCurrentFilename(None)
     
     self.setAcceptDrops(True)
+  
+  def _init_style(self):
+    self.setStyleSheet(open("./style.qss").read())
 
   def _load_assets(self):
     self.icons = dict()
-    for name, fn in [("Info", r"./assets/icons/info.png"),
-                     ("Success", r"./assets/icons/success.png"),
-                     ("Warning", r"./assets/icons/warning.png"),
-                     ("Error", r"./assets/icons/error.png")]:
+    for name, stdicon in [("Info", QStyle.SP_MessageBoxInformation),
+                          ("Success", QStyle.SP_DialogApplyButton),
+                          ("Warning", QStyle.SP_MessageBoxWarning),
+                          ("Error", QStyle.SP_MessageBoxCritical),
+                          ("Save", QStyle.SP_DialogSaveButton),
+                          ("Open", QStyle.SP_DialogOpenButton),
+                          ("New", QStyle.SP_DialogResetButton),
+                          ("Delete", QStyle.SP_DialogDiscardButton),
+                          ("Import", QStyle.SP_ArrowDown),
+                          ("Export", QStyle.SP_ArrowUp),
+                          ("Ok", QStyle.SP_DialogOkButton),
+                          ("Form", QStyle.SP_FileDialogDetailedView),
+                          ("File", QStyle.SP_FileIcon),
+                          ("List", QStyle.SP_FileDialogListView),
+                          ("Folder", QStyle.SP_DirIcon),
+                          ("Window", QStyle.SP_TitleBarNormalButton)]:
+      self.icons[name] = self.style().standardIcon(stdicon)
+
+    for name, fn in [("Mesh", r"./assets/icons/mesh.png"),
+                     ("Texture", r"./assets/icons/texture.png"),
+                     ("Model", r"./assets/icons/model.png"),
+                     ("Light", r"./assets/icons/light.png"),
+                     ("Scene", r"./assets/icons/scene.png"),
+                     ("Edit", r"./assets/icons/edit.png"),
+                     ("Camera", r"./assets/icons/camera.png"),
+                     ("Selected", r"./assets/icons/selected.png"),
+                     ("Image File", r"./assets/icons/imagefile.png")]:
       self.icons[name] = QIcon(fn)
 
     self.fonts = dict()
     self.fonts["heading"] = QFont("Calibri", 16, QFont.Bold)
+
+    ObjList.iconDict = {Mesh: self.icons["Mesh"],
+                        Tex: self.icons["Texture"],
+                        Model: self.icons["Model"],
+                        Light: self.icons["Light"]}
+    
+    ObjList.bgDict = {Mesh: CBrush("#e2ffd9"), # light green
+                      Tex: CBrush("#eadcff"), # light blue
+                      Model: CBrush("#b2fffd"), # light cyan
+                      Light: CBrush("#ffffc5") # light yellow
+                      }
 
   def _make_widgets(self):
     '''Initialise all widgets'''
@@ -338,55 +306,58 @@ class MainApp(QMainWindow):
     self.setLayout(layout)
     
     bar = self.menuBar()
-    file = bar.addMenu("File")
-    file.addAction("New project", self.newProject)
-    file.addAction("Open project", self.openProject)
-    file.addAction("Save project", self.saveProject)
-    file.addAction("Save project as...", self.saveasProject)
+    file = bar.addMenu("&File")
+    self.fileMenu_new = QAction(self.icons["New"], "&New project")
+    self.fileMenu_open = QAction(self.icons["Open"], "&Open project")
+    self.fileMenu_save = QAction(self.icons["Save"], "&Save project")
+    self.fileMenu_saveas = QAction(self.icons["Save"], "Save project &as...")
+    self.fileMenu_exportimage = QAction(self.icons["Image File"], "&Export image")
+    file.addAction(self.fileMenu_new)
+    file.addAction(self.fileMenu_open)
+    file.addAction(self.fileMenu_save)
+    file.addAction(self.fileMenu_saveas)
     file.addSeparator()
-    file.addAction("Load meshes", self.loadMeshes)
-    file.addAction("Load textures", self.loadTextures)
+    file.addAction(self.icons["Mesh"], "Load &meshes", self.loadMeshes)
+    file.addAction(self.icons["Texture"], "Load &textures", self.loadTextures)
     file.addSeparator()
-    file.addAction("Export image", self.exportImage)
-    scene = bar.addMenu("Scene")
-    scene.addAction("Make models", self.makeModels)
-    scene.addAction("Make lights", self.makeLights)
-    view = bar.addMenu("View")
-    view.addAction("Show Environment", self.showEnv)
-    view.addAction("Show Edit", self.showEdit)
-    view.addAction("Show Log", self.showLog)
+    file.addAction(self.fileMenu_exportimage)
+    scene = bar.addMenu("&Scene")
+    scene.addAction(self.icons["Model"], "Make &models", self.makeModels)
+    scene.addAction(self.icons["Light"], "Make &lights", self.makeLights)
+    view = bar.addMenu("&View")
+    self.viewMenu_env = QAction(self.icons["Scene"], "E&nvironment", checkable=True)
+    self.viewMenu_edit = QAction(self.icons["Edit"], "&Edit", checkable=True)
+    self.viewMenu_log = QAction(self.icons["Info"], "&Log", checkable=True)
+    view.addAction(self.viewMenu_env)
+    view.addAction(self.viewMenu_edit)
+    view.addAction(self.viewMenu_log)
 
     self.gl = glWidget(self)
     self.setCentralWidget(self.gl)
     
     self.envPane = QDockWidget("Environment", self)
-    self.envPane.setFeatures(QDockWidget.DockWidgetMovable|
-                              QDockWidget.DockWidgetClosable)
-    self.env = ResizableTabWidget(movable=True)
-    self.meshList = AssetList(self)
-    self.texList = AssetList(self)
-    self.modelList = RendList(self)
-    self.lightList = RendList(self)
-    self.env.addTab(self.meshList, "Meshes")
-    self.env.addTab(self.texList, "Textures")
-    self.env.addTab(self.modelList, "Models")
-    self.env.addTab(self.lightList, "Lights")
-    self.env.setTabEnabled(2, True)
+    self.env = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
+    self.meshList = ObjList(self)
+    self.texList = ObjList(self)
+    self.modelList = ObjList(self)
+    self.lightList = ObjList(self)
+    self.env.addTab(self.meshList, self.icons["Mesh"], "")
+    self.env.addTab(self.texList, self.icons["Texture"], "")
+    self.env.addTab(self.modelList, self.icons["Model"], "")
+    self.env.addTab(self.lightList, self.icons["Light"], "")
     self.envPane.setWidget(self.env)
     self.envPane.setFloating(False)
     self.addDockWidget(Qt.LeftDockWidgetArea, self.envPane)
 
     self.editPane = QDockWidget("Edit", self)
-    self.editPane.setFeatures(QDockWidget.DockWidgetMovable|
-                              QDockWidget.DockWidgetClosable)
-    self.edit = ResizableTabWidget(movable=True)
+    self.edit = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
     self.camEdit = QWidget()
     self.camScrollArea = VerticalScrollArea()
     self.selEdit = ResizableStackedWidget()
     self.selEdit.currentChanged.connect(lambda i: self.edit.onCurrentChanged(0))
     self.selScrollArea = VerticalScrollArea()
-    self.edit.addTab(self.camScrollArea, "Camera")
-    self.edit.addTab(self.selScrollArea, "Selected")
+    self.edit.addTab(self.camScrollArea, self.icons["Camera"], "")
+    self.edit.addTab(self.selScrollArea, self.icons["Selected"], "")
     self.editPane.setWidget(self.edit)
     self.initEditPane()
     self.camScrollArea.setWidget(self.camEdit)
@@ -396,42 +367,50 @@ class MainApp(QMainWindow):
     self.addDockWidget(Qt.RightDockWidgetArea, self.editPane)
 
     self.logPane = QDockWidget("Log", self)
-    self.logPane.setFeatures(QDockWidget.DockWidgetMovable|
-                             QDockWidget.DockWidgetClosable)
     self.logModel = QStandardItemModel(0,3, self.logPane)
     self.logModel.setHorizontalHeaderLabels(["Type", "Info", "Timestamp"])
     self.log = QTableView()
-##    self.log.setEditTriggers(QAbstractItemView.NoEditTriggers)
     self.log.setModel(self.logModel)
     self.log.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
     self.log.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
     self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
     self.logPane.setWidget(self.log)
     self.addDockWidget(Qt.BottomDockWidgetArea, self.logPane)
-    self.logEntry("Info", "Welcome to Renderer 0.4.0")
+    self.logEntry("Info", "Welcome to Renderer 0.5.0")
     self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
 
+    self.fileMenu_new.triggered.connect(self.newProject)
+    self.fileMenu_open.triggered.connect(self.openProject)
+    self.fileMenu_save.triggered.connect(self.saveProject)
+    self.fileMenu_saveas.triggered.connect(self.saveasProject)
+    self.fileMenu_exportimage.triggered.connect(self.exportImage)
+    self.viewMenu_env.triggered.connect(self.curryTogglePane(self.envPane))
+    self.viewMenu_edit.triggered.connect(self.curryTogglePane(self.editPane))
+    self.viewMenu_log.triggered.connect(self.curryTogglePane(self.logPane))
+    self.envPane.visibilityChanged.connect(self.updateMenu)
+    self.editPane.visibilityChanged.connect(self.updateMenu)
+    self.logPane.visibilityChanged.connect(self.updateMenu)
+
   def _init_hotkeys(self):
-    def quickShortcut(keySeq, func):
-      return QShortcut(QKeySequence(keySeq), self).activated.connect(func)
-    quickShortcut("Ctrl+N", self.newProject)
-    quickShortcut("Ctrl+O", self.openProject)
-    quickShortcut("Ctrl+S", self.saveProject)
-    quickShortcut("Ctrl+Shift+S", self.saveasProject)
-    quickShortcut("Ctrl+E", self.exportImage)
-    
-  
-  def showEnv(self):
-    '''Show environment pane'''
-    self.envPane.show()
+    def quickShortcut(keySeq, qaction):
+      qaction.setShortcut(QKeySequence(keySeq))
+    quickShortcut("Ctrl+N", self.fileMenu_new)
+    quickShortcut("Ctrl+O", self.fileMenu_open)
+    quickShortcut("Ctrl+S", self.fileMenu_save)
+    quickShortcut("Ctrl+Shift+S", self.fileMenu_saveas)
+    quickShortcut("Ctrl+E", self.fileMenu_exportimage)
 
-  def showEdit(self):
-    '''Show edit pane'''
-    self.editPane.show()
+  def updateMenu(self):
+    self.viewMenu_env.setChecked(self.envPane.isVisible())
+    self.viewMenu_edit.setChecked(self.editPane.isVisible())
+    self.viewMenu_log.setChecked(self.logPane.isVisible())
 
-  def showLog(self):
-    '''Show log pane'''
-    self.logPane.show()
+  def curryTogglePane(self, pane):
+    def togglePane():
+      v = pane.isVisible()
+      pane.setVisible(not v)
+      self.updateMenu()
+    return togglePane
 
   def logEntry(self, entryType, entryText):
     '''Log an entry into the log pane'''
@@ -448,6 +427,10 @@ class MainApp(QMainWindow):
     if self.logModel.rowCount() > 100:
       self.logModel.removeRows(100, 1)
 
+    self.log.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+    self.log.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+    self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+
   def clearLists(self):
     '''Empty all QListWidget's'''
     self.meshList.clear()
@@ -463,18 +446,11 @@ class MainApp(QMainWindow):
                  Light: self.lightList}
     L = QListDict[type(envobj)]
     item = L.add(envobj)
-    
-  def addAsset(self, asset):
-    '''Adds Asset object into scene and QListWidget'''
-    if self.R.addAsset(asset): # asset already in user environment
+
+  def add(self, obj):
+    if self.R.add(obj):
       return
-    self.addEnvObj(asset)
-      
-  def addRend(self, rend):
-    '''Adds Renderable object into userenv and QListWidget'''
-    if self.R.addRend(rend): # renderable already in the scene
-      return
-    self.addEnvObj(rend)
+    self.addEnvObj(obj)
 
   def setCurrentFilename(self, fn):
     self.filename = fn
@@ -511,6 +487,7 @@ class MainApp(QMainWindow):
   def saveasProject(self):
     '''Prompt to save project'''
     fd = QFileDialog()
+    fd.setWindowTitle("Save As")
     fd.setAcceptMode(QFileDialog.AcceptSave)
     fd.setFileMode(QFileDialog.AnyFile)
     fd.setNameFilters(["3-D Project (*.3dproj)"])
@@ -527,6 +504,7 @@ class MainApp(QMainWindow):
   def openProject(self): # TODO
     '''Prompt to open project'''
     fd = QFileDialog()
+    fd.setWindowTitle("Open")
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFile)
     fd.setNameFilters(["3-D Project (*.3dproj)", "Any File (*.*)"])
@@ -545,6 +523,8 @@ class MainApp(QMainWindow):
     else:
       self.setCurrentFilename(fn)
       self.logEntry("Success", "Fully loaded from %s"%shortfn(fn))
+    finally:
+      self.update()
 
   def restoreProject(self):
     '''Attempt to restore project from previous session'''
@@ -557,10 +537,12 @@ class MainApp(QMainWindow):
         self.logEntry("Success", "Previous session restored.")
     else:
       self.newProject()
+    self.update()
 
   def loadMeshes(self):
     '''Prompt to load mesh files'''
     fd = QFileDialog()
+    fd.setWindowTitle("Load Meshes")
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFiles)
     fd.setNameFilters([r"Wavefront Object files (*.obj)"])
@@ -571,6 +553,7 @@ class MainApp(QMainWindow):
   def loadTextures(self):
     '''Prompt to load texture files'''
     fd = QFileDialog()
+    fd.setWindowTitle("Load Textures")
     fd.setAcceptMode(QFileDialog.AcceptOpen)
     fd.setFileMode(QFileDialog.ExistingFiles)
     fd.setNameFilters(["Images (*.bmp;*.png;*.jpg;*.jpeg)"])
@@ -582,14 +565,14 @@ class MainApp(QMainWindow):
     ext = os.path.splitext(fn)[1]
     if ext in [".bmp", ".png", ".jpg", ".jpeg"]:
       try:
-        self.addAsset(self.R.loadTexture(fn))
+        self.add(self.R.loadTexture(fn))
       except:
         self.logEntry("Error", "Bad texture file: %s"%shortfn(fn))
       else:
         self.logEntry("Success", "Loaded texture from %s"%shortfn(fn))
     elif ext in [".obj"]:
       try:
-        self.addAsset(self.R.loadMesh(fn))
+        self.add(self.R.loadMesh(fn))
       except:
         self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
       else:
@@ -617,7 +600,7 @@ class MainApp(QMainWindow):
     dimLayout.addRow("Height", height)
 
     # CONFIRMATION BUTTON
-    export = QPushButton(text="Export")
+    export = QPushButton(text="Export", icon=self.icons["Export"])
     layout.addWidget(export, 1,0, 1,1)
 
     def tryExport():
@@ -669,9 +652,9 @@ class MainApp(QMainWindow):
     layout.addWidget(assetBox, 0,0, 2,1)
     assetLayout = QFormLayout()
     assetBox.setLayout(assetLayout)
-    mList = copyAssetList(self.meshList)
+    mList = copyObjList(self.meshList)
     assetLayout.addRow("Mesh", mList)
-    tList = copyAssetList(self.texList)
+    tList = copyObjList(self.texList)
     assetLayout.addRow("Texture", tList)
 
     # POSE GROUP BOX
@@ -679,12 +662,14 @@ class MainApp(QMainWindow):
     layout.addWidget(poseBox, 0,1, 1,1)
     poseLayout = QFormLayout()
     poseBox.setLayout(poseLayout)
-    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    camx, camy, camz = self.UE.camera.pos
+    camrx, camry, camrz = [cyclamp(r*180/pi, (-180, 180)) for r in self.UE.camera.rot]
+    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camx)
+    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camy)
+    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camz)
+    rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camrx)
+    ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camry)
+    rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camrz)
     scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
     poseLayout.addRow("x", x)
     poseLayout.addRow("y", y)
@@ -694,41 +679,46 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Roll", rz)
     poseLayout.addRow("scale", scale)
 
-    # MATERIAL GROUP BOX
-    matBox = QGroupBox("Material")
-    layout.addWidget(matBox, 1,1, 1,1)
-    matLayout = QFormLayout()
-    matBox.setLayout(matLayout)
-    shininess = QDoubleSpinBox(minimum=0, maximum=2147483647)
-    matLayout.addRow("Shininess", shininess)
-
     # CUSTOMISATION GROUP BOX
     custBox = QGroupBox("Customization")
-    layout.addWidget(custBox, 2,0, 1,1)
+    layout.addWidget(custBox, 1,1, 1,1)
     custLayout = QFormLayout()
     custBox.setLayout(custLayout)
     name = QLineEdit(text="model0")
     custLayout.addRow("Name", name)
 
+    lastx = x.value()
+    lasty = y.value()
+    lastz = z.value()
+
     def tryMakeModel(): # Attempt to construct Model from selected settings
+      nonlocal lastx, lasty, lastz # allows access to lastx, lasty, lastz declared in the outer function
       m = mList.selectedItems()
       t = tList.selectedItems()
       if not (len(m) and len(t)):
         self.logEntry("Error", "Please select a mesh and a texture.")
         return
-      mesh = m[0].asset
-      tex = t[0].asset
-      pos = Point(x.value(), y.value(), z.value())
+      mesh = m[0].obj
+      tex = t[0].obj
+      xv, yv, zv = x.value(), y.value(), z.value()
+      pos = Point(xv, yv, zv)
       rot = Rot(pi*rx.value()/180, pi*ry.value()/180, pi*rz.value()/180)
-      model = Model(mesh, tex, shininess=shininess.value(),
+      model = Model(mesh, tex,
                     pos=pos, rot=rot, scale=scale.value(),
                     name=name.text())
-      self.addRend(model)
+      self.add(model)
+      dx = xv - lastx
+      dy = yv - lasty
+      dz = zv - lastz
+      x.setValue(xv+dx)
+      y.setValue(yv+dy)
+      z.setValue(zv+dz)
+      lastx, lasty, lastz = xv, yv, zv
       self.logEntry("Success", "Made model.")
 
-    make = QPushButton(text="Make Model")
+    make = QPushButton(text="Make Model", icon=self.icons["Ok"])
     make.clicked.connect(tryMakeModel)
-    layout.addWidget(make, 2,1, 1,1)
+    layout.addWidget(make, 2,0, 1,2)
 
     def testValid(): # Update the button that constructs the model (enabled or disabled)
       # there should be at least one selected model and texture
@@ -751,10 +741,10 @@ class MainApp(QMainWindow):
 
   def initCamEdit(self):
     '''Initialises the camera tab on the edit pane'''
-    L = self.camEditLayout = CenteredVBoxLayout()
+    L = self.camEditLayout = QVBoxLayout()
     self.camEdit.setLayout(L)
 
-    heading = QLabel("Camera", font=self.fonts["heading"])
+    heading = QLabel("Camera", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     x = self.camEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.camEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     z = self.camEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
@@ -791,7 +781,7 @@ class MainApp(QMainWindow):
   def initSelEdit(self):
     '''Initialises all layouts for the Selected tab of the Edit pane.'''
     #===NIL===
-    L = CenteredVBoxLayout()
+    L = QVBoxLayout()
     info = QLabel("No object selected.")
     L.addWidget(info)
     L.setAlignment(info, Qt.AlignCenter)
@@ -800,12 +790,12 @@ class MainApp(QMainWindow):
     self.selEdit.addWidget(W)
 
     #===TEXTURE===
-    L = CenteredVBoxLayout()
-    heading = QLabel("Texture", font=self.fonts["heading"])
+    L = QVBoxLayout()
+    heading = QLabel("Texture", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.texEdit_name = QLineEdit()
     thumbnail = self.texEdit_thumbnail = QLabel()
-    change = QPushButton(text="Change Image")
-    delete = QPushButton(text="Delete")
+    change = QPushButton(text="Change Image", icon=self.icons["File"])
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     name.textChanged.connect(self.updateSelected)
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
@@ -819,28 +809,32 @@ class MainApp(QMainWindow):
     self.selEdit.addWidget(W)
 
     #===MESH===
-    L = CenteredVBoxLayout()
-    heading = QLabel("Mesh", font=self.fonts["heading"])
+    L = QVBoxLayout()
+    heading = QLabel("Mesh", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.meshEdit_name = QLineEdit()
     info = self.meshEdit_info = QTableWidget()
     info.verticalHeader().setVisible(False)
     info.horizontalHeader().setVisible(False)
     info.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-    info.verticalHeader().setDefaultSectionSize(30)
+    info.verticalHeader().setDefaultSectionSize(24)
     infoBox = self.meshEdit_infoBox = QGroupBox("Info")
     infoLayout = QGridLayout()
     infoBox.setLayout(infoLayout)
     infoLayout.addWidget(info, 0,0, 1,1)
-    change = QPushButton(text="Change Meshfile")
-    delete = QPushButton(text="Delete")
+    change = QPushButton(text="Change Meshfile", icon=self.icons["File"])
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     cullbackface = self.meshEdit_cullbackface = QCheckBox(text="Watertight", tristate=False)
+    renderBox = QGroupBox("Rendering")
+    renderLayout = QFormLayout()
+    renderBox.setLayout(renderLayout)
+    renderLayout.addWidget(cullbackface)
     name.textChanged.connect(self.updateSelected)
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
     cullbackface.stateChanged.connect(self.updateSelected)
     L.addWidget(heading)
     L.addWidget(name)
-    L.addWidget(cullbackface)
+    L.addWidget(renderBox)
     L.addWidget(infoBox)
     L.addWidget(change)
     L.addWidget(delete)
@@ -849,13 +843,13 @@ class MainApp(QMainWindow):
     self.selEdit.addWidget(W)
 
     #===MODEL===
-    L = CenteredVBoxLayout()
+    L = QVBoxLayout()
 
-    heading = QLabel("Model", font=self.fonts["heading"])
+    heading = QLabel("Model", font=self.fonts["heading"], alignment=Qt.AlignCenter)
 
     name = self.modelEdit_name = QLineEdit()
-    change = QPushButton(text="Change Assets")
-    delete = QPushButton(text="Delete")
+    change = QPushButton(text="Change Assets", icon=self.icons["Form"])
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     x = self.modelEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.modelEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     z = self.modelEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
@@ -863,8 +857,7 @@ class MainApp(QMainWindow):
     ry = self.modelEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
     rz = self.modelEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
     scale = self.modelEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
-    shininess = self.modelEdit_shininess = QDoubleSpinBox(minimum=0, maximum=2147483647, singleStep=0.05)
-    visible = self.modelEdit_visible = QCheckBox(tristate=False)
+    visible = self.modelEdit_visible = QCheckBox(text="Visible", tristate=False)
     mesh = self.modelEdit_mesh = QLineEdit(readOnly=True)
     tex = self.modelEdit_tex = QLineEdit(readOnly=True)
     
@@ -885,17 +878,11 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Roll", rz)
     poseLayout.addRow("Scale", scale)
 
-    matBox = QGroupBox("Material")
-    L.addWidget(matBox)
-    matLayout = QFormLayout()
-    matBox.setLayout(matLayout)
-    matLayout.addRow("Shininess", shininess)
-
     sceneBox = QGroupBox("Scene")
     L.addWidget(sceneBox)
     sceneLayout = QFormLayout()
     sceneBox.setLayout(sceneLayout)
-    sceneLayout.addRow("Visible", visible)
+    sceneLayout.addWidget(visible)
 
     assetBox = QGroupBox("Assets")
     L.addWidget(assetBox)
@@ -909,7 +896,7 @@ class MainApp(QMainWindow):
     L.addWidget(change)
     L.addWidget(delete)
 
-    for setting in [x,y,z, rx,ry,rz, scale, shininess]:
+    for setting in [x,y,z, rx,ry,rz, scale]:
       setting.valueChanged.connect(self.updateSelected)
 
     visible.stateChanged.connect(self.updateSelected)
@@ -951,6 +938,7 @@ class MainApp(QMainWindow):
     fovy = self.camEdit_fovy.value()
     zoom = self.camEdit_zoom.value()
     self.R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
+    self.gl.glDraw()
 
   def reinitSelected(self):
     '''Prompts user to reinitialise the selected object from different files/assets'''
@@ -966,9 +954,10 @@ class MainApp(QMainWindow):
         fn = fd.selectedFiles()[0]
         try:
           newMesh = self.R.loadMesh(fn)
-          self.R.delAsset(S, rmpointer=False)
+          self.R.delete(S)
           S.__dict__ = newMesh.__dict__
           S.name = name
+          self.R.add(S)
         except:
           self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
         else:
@@ -983,9 +972,10 @@ class MainApp(QMainWindow):
         fn = fd.selectedFiles()[0]
         try:
           newTex = self.R.loadTexture(fn)
-          self.R.delAsset(S, rmpointer=False)
+          self.R.delete(S)
           S.__dict__ = newTex.__dict__
           S.name = name
+          self.R.add(S)
         except:
           self.logEntry("Error", "Bad image file: %s"%shortfn(fn))
         else:
@@ -1002,9 +992,9 @@ class MainApp(QMainWindow):
       layout.addWidget(assetBox, 0,0, 1,1)
       assetLayout = QFormLayout()
       assetBox.setLayout(assetLayout)
-      mList = copyAssetList(self.meshList)
+      mList = copyObjList(self.meshList)
       assetLayout.addRow("Mesh", mList)
-      tList = copyAssetList(self.texList)
+      tList = copyObjList(self.texList)
       assetLayout.addRow("Texture", tList)
 
       if not S.mesh.deleted:
@@ -1017,39 +1007,39 @@ class MainApp(QMainWindow):
         t = tList.selectedItems()
         if not (len(m) and len(t)):
           return
-        S.mesh = m[0].asset
-        S.tex = t[0].asset
+        S.mesh = m[0].obj
+        S.tex = t[0].obj
         self.update()
       
       mList.itemClicked.connect(tryChangeModel)
       tList.itemClicked.connect(tryChangeModel)
       M.exec_()
 
+    self.updateSelEdit()
+
 
   def deleteSelected(self):
     '''Deletes selected object'''
+    self.delete(self.selected)
+    self.update()
+
+  def delete(self, obj):
+    '''Deletes object (Mesh, Tex, Model, or Light) from user environment, ui list, and file cache and deselects it'''
+    # Remove from list
     listDict = {Mesh: self.meshList,
                 Tex: self.texList,
                 Model: self.modelList,
                 Light: self.lightList}
-    try:
-      l = listDict[type(self.selected)]
-    except KeyError:
-      return
+    l = listDict[type(obj)]
     for i in range(l.count()):
       item = l.item(i)
-      if isinstance(l, AssetList) and item.asset is self.selected:
-        l.remove(item)
+      if item.obj is obj:
+        l.takeItem(i)
         break
-      elif isinstance(l, RendList) and item.rend is self.selected:
-        l.remove(item)
-        break
-    if isinstance(self.selected, Asset):
-      self.R.delAsset(self.selected)
-    elif isinstance(self.selected, Renderable):
-      self.R.delRend(self.selected)
-    self.selected = None
-    self.update()
+    self.R.delete(obj)
+    # Deselect object
+    if self.selected is obj:
+      self.select(None)
 
   def updateSelected(self):
     '''Updates selected object from displayed settings'''
@@ -1073,10 +1063,11 @@ class MainApp(QMainWindow):
                   pi*self.modelEdit_ry.value()/180,
                   pi*self.modelEdit_rz.value()/180)
       S.scale = self.modelEdit_scale.value()
-      S.shininess = self.modelEdit_shininess.value()
       S.visible = self.modelEdit_visible.isChecked()
       self.modelEdit_visible.setTristate(False)
       self.modelList.update()
+      
+    self.gl.glDraw()
 
   def switchSelEdit(self, objType):
     '''Updates the stacked widget in the "Selected" tab of the edit pane'''
@@ -1134,7 +1125,6 @@ class MainApp(QMainWindow):
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
       scale = S.scale
-      shininess = S.shininess
       visible = S.visible
       mesh = S.mesh.name
       tex = S.tex.name
@@ -1150,8 +1140,7 @@ class MainApp(QMainWindow):
                            (self.modelEdit_rx, rx),
                            (self.modelEdit_ry, ry),
                            (self.modelEdit_rz, rz),
-                           (self.modelEdit_scale, scale),
-                           (self.modelEdit_shininess, shininess)]:
+                           (self.modelEdit_scale, scale)]:
         setting.blockSignals(True)
         setting.setValue(var)
         setting.blockSignals(False)
@@ -1173,16 +1162,23 @@ class MainApp(QMainWindow):
   def select(self, obj):
     '''Selects an object for editing'''
     self.selected = obj
+    if isinstance(obj, Renderable):
+      self.R.lookAt(obj)
     self.edit.setCurrentWidget(self.selScrollArea)
     self.updateSelEdit()
 
   def update(self):
     '''Overload: update to display correct features'''
+    self.updateMenu()
     self.updateCamEdit()
     self.updateSelEdit()
+    self.gl.glDraw()
     super().update()
 
   def closeEvent(self, event):
+    self.envPane.hide()
+    self.editPane.hide()
+    self.logPane.hide()
     self.S.update()
     print("Goodbye!")
 
@@ -1211,4 +1207,3 @@ if __name__ == "__main__":
       print(e)
       return 1
   sys.exit(tryexec())
-

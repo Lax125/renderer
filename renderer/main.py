@@ -6,8 +6,7 @@ Entry point for main graphical application.
 Made solely by Marcus Koh
 '''
 
-import sys, os
-from PyQt5.QtWidgets import QApplication
+from init import *
 from gui import MainApp
 
 def demo(app):

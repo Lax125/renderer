@@ -1,5 +1,5 @@
-import sys, os
-import shutil
+#!/usr/bin/python
+from init import *
 
 try:
   DATAPATH = os.path.join(os.getenv("APPDATA"), "Renderer")

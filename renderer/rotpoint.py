@@ -4,10 +4,7 @@ rotpoint.py
 describes positioning and rotation of cameras and models
 '''
 
-import logging
-from typing import Iterable
-import numpy as np
-from math import sin, cos, tan, atan2, pi, tau, hypot
+from init import *
 
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
@@ -132,11 +129,10 @@ class Rot(Tuple3f):
     '''Get transformation matrix of Rot object'''
     rx, ry, rz = self
     if invert:
-      ry = -ry
-      rz = -rz
-    x_rm = np.matrix([[1, 0,        0      ],
-                      [0, cos(rx), -sin(rx)],
-                      [0, sin(rx),  cos(rx)]
+      rx, ry, rz = -rx, -ry, -rz
+    x_rm = np.matrix([[1,  0,       0      ],
+                      [0,  cos(rx), sin(rx)],
+                      [0, -sin(rx), cos(rx)]
                       ])
     y_rm = np.matrix([[ cos(ry), 0, sin(ry)],
                       [ 0,       1, 0      ],
