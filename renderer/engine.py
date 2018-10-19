@@ -3,9 +3,15 @@
 engine.py
 describes 3-D scenes and it's rendering process
 with the help of OpenGL
+
+Rendering is based on a single projection matrix and a stack of modelview matrices.
+The stack is used to walk through a tree of Renderables in a depth-first search.
+Whenever a Renderable is processed in the dfs, it modifies the current working
+modelview matrix and pushes it onto the stack. Several layers of matrix math
+are handled, each layer consisting of a translation, rotation, and scaling.
 '''
 
-from init import *
+from all_modules import *
 
 # CUSTOM SCRIPTS FOR:
 #   - DESCRIBING POSITIONS IN 3-D AND ROTATIONAL ORIENTATION
@@ -18,6 +24,45 @@ FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
 logger = logging.getLogger('engine')
 
+selected = set()
+monoselected = None
+clipboard = None
+camPos = None
+camTrueFovy = None
+
+def mix_permute(A, B):
+  if len(A) == 0 or len(B) == 0:
+    yield []
+    return
+  for l in mix_permute(A[:-1], B[:-1]):
+    yield l+[A[-1]]
+    yield l+[B[-1]]
+
+def glGetModelview(): # convenience: get modelview matrix
+  return glGetFloatv(GL_MODELVIEW_MATRIX)
+
+def glApplyRot(rot, invert=False):
+  rx, ry, rz = rot
+  if not invert:
+    glRotate(degrees(-ry), 0.0, 1.0, 0.0)
+    glRotate(degrees(rx), 1.0, 0.0, 0.0)
+    glRotate(degrees(-rz), 0.0, 0.0, 1.0)
+  else:
+    glRotate(-degrees(-rz), 0.0, 0.0, 1.0)
+    glRotate(-degrees(rx), 1.0, 0.0, 0.0)
+    glRotate(-degrees(-ry), 0.0, 1.0, 0.0)
+
+def glGetScale():
+  A = np.array(glGetModelview())
+  return (A[0,0]**2 + A[1,0]**2 + A[2,0]**2)**0.5
+
+def gluCamera(camera, aspect):
+    glLoadIdentity()
+    defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
+    gluPerspective(defacto_fovy, aspect, *camera.zRange)
+    gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
+    glTranslatef(*-camera.pos)
+
 class Camera:
   '''Describes a camera in 3-D position and rotation'''
   
@@ -29,41 +74,339 @@ class Camera:
     self.zoom = zoom # true fovy == atan(tan(fovy/2)/zoom)*2
     self.zRange = zRange # visible slice of the scene
 
-  def get_forward_vector(self):
-    return self.rot.get_forward_vector()
+  def get_forward_vector(self, *args, **kwargs):
+    return self.rot.get_forward_vector(*args, **kwargs)
 
-  def get_upward_vector(self):
-    return self.rot.get_upward_vector()
+  def get_upward_vector(self, *args, **kwargs):
+    return self.rot.get_upward_vector(*args, **kwargs)
+
+  def getTrueFovy(self):
+    return degrees(atan(tan(radians(self.fovy)/2)/self.zoom))*2
 
 class Renderable:
   '''Base class for renderable objects: Models, Lights'''
-
+  
   def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, visible=True, name="renderable0"):
+    self.parent = None
     self.pos = pos
     self.rot = rot
     self.scale = scale
     self.visible = visible
     self.name = name
+    self.minPoint = Point(0, 0, 0)
+    self.maxPoint = Point(0, 0, 0)
+    self.update_bbox()
+    self.init_axes()
 
   def __str__(self):
     return self.name
 
-  def glMat(self):
-    # TRANSLATE
-    glTranslatef(*self.pos)
+  def glMat(self, invert=False): # gl transform according to position, orientation, and scale
+    if not invert:
+      # TRANSLATE
+      glTranslatef(*self.pos)
 
-    # ROTATE
-    gluLookAt(0,0,0, *self.rot.get_forward_vector(), *self.rot.get_upward_vector())
+      # ROTATE
+      glApplyRot(self.rot)
 
-    # SCALE
-    glScalef(self.scale, self.scale, self.scale)
+      # SCALE
+      glScalef(self.scale, self.scale, self.scale)
+    else:
+      glScalef(1/self.scale, 1/self.scale, 1/self.scale)
+      glApplyRot(self.rot, invert=True)
+      glTranslatef(*-self.pos)
 
-  def render(self): # overload with function that puts the renderable in the OpenGL environment
+  def place(self): # overload with function that puts the renderable in the OpenGL environment
     pass
 
-  def place(self):
+  def placeSel(self): # place extra stuff because i am selected
+    pass
+
+  def placeMonosel(self): # place extra stuff because i am THE selected
+    pass
+
+  def placeBBox(self):
+    glEnable(GL_BLEND)
+    glColor4f(1.0, 1.0, 1.0, 0.75)
+    glLineWidth(3)
+    V, LINE_I = self.vbo_bbox_buffers
+    glEnableClientState(GL_VERTEX_ARRAY)
+    glBindBuffer(GL_ARRAY_BUFFER, V)
+    glVertexPointer(3, GL_FLOAT, 0, None)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, LINE_I)
+    glDrawElements(GL_LINES, len(self.vbo_bbox_line_indices), GL_UNSIGNED_INT, None)
+    glDisableClientState(GL_VERTEX_ARRAY)
+    glDisable(GL_BLEND)
+
+  def placeAxes(self):
+    glLineWidth(5)
+    V, C, LINE_I = self.vbo_axes_buffers
+    glEnableClientState(GL_VERTEX_ARRAY)
+    glEnableClientState(GL_COLOR_ARRAY)
+    glBindBuffer(GL_ARRAY_BUFFER, V)
+    glVertexPointer(3, GL_FLOAT, 0, None)
+    glBindBuffer(GL_ARRAY_BUFFER, C)
+    glColorPointer(3, GL_FLOAT, 0, None)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, LINE_I)
+    glDrawElements(GL_LINES, len(self.vbo_bbox_line_indices), GL_UNSIGNED_INT, None)
+    glDisableClientState(GL_VERTEX_ARRAY)
+    glDisableClientState(GL_COLOR_ARRAY)
+
+  def placePlanes(self):
+    # Face culling is, by default, disabled
+    glEnable(GL_BLEND) # needed for alpha
+    glDepthMask(False) # prevent writing to depth buffer
+    V, TRI_I = self.vbo_plane_buffers
+    glColor4f(1.0, 1.0, 1.0, 0.25)
+    glEnableClientState(GL_VERTEX_ARRAY)
+    glBindBuffer(GL_ARRAY_BUFFER, V)
+    glVertexPointer(3, GL_FLOAT, 0, None)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, TRI_I)
+    glDrawElements(GL_TRIANGLES, len(self.vbo_plane_tri_indices), GL_UNSIGNED_INT, None)
+    glDepthMask(True) # resume writing to depth buffer
+    glDisable(GL_BLEND) # needed for alpha
+
+  def placeOrigin(self):
+    glEnable(GL_BLEND)
+    glColor4f(0.0, 0.0, 1.0, 0.2)
+##    glLineWidth(10)
+##    x, y, z = self.getTruePos()
+##    camx, camy, camz = camPos
+##    dist = ((x-camx)**2 + (y-camy)**2 + (z-camz)**2)**0.5
+##    scale = tan(radians(camTrueFovy))*dist/(100*glGetScale())
+##    gluSphere(gluNewQuadric(), scale, 25, 25)
+    gluSphere(gluNewQuadric(), 1, 25, 25)
+    glDisable(GL_BLEND)
+  
+  def render(self):
     self.glMat()
-    self.render()
+    if self.visible:
+      self.place()
+    if self in selected:
+      self.placeBBox()
+      self.placeSel()
+    if self is monoselected:
+      self.placeAxes()
+      self.placeMonosel()
+  
+  def renderSelectedAE(self):
+    '''render after effects for selected'''
+    self.glMat()
+    if self is monoselected:
+      self.placePlanes()
+    # dashed lines for hidden lines
+    glLineStipple(1, 0x000F)
+    glEnable(GL_LINE_STIPPLE)
+    glDepthFunc(GL_GREATER) # render the following if it is behind
+    if self in selected:
+      self.placeBBox()
+    if self is monoselected:
+      self.placeAxes()
+    glDepthFunc(GL_LESS)
+    glDisable(GL_LINE_STIPPLE)
+
+  def renderOverlay(self):
+    self.glMat()
+    if self in selected:
+      self.placeOrigin()
+
+  def _setParent(self, parent):
+    # remove self from parent's set
+    if self.parent is not None:
+      self.parent.rends.discard(self)
+
+    # add self to new parent
+    if parent is not None:
+      parent.rends.add(self)
+
+    self.parent = parent
+
+  def setParent(self, parent):
+    # check for loops
+    old_parent = self.parent
+    self._setParent(parent)
+    hasCycle, badPath = self.cycleCheck()
+    if hasCycle:
+      self._setParent(old_parent)
+      raise TreeError(badPath)
+
+  def getPath(self):
+    if self.parent is None:
+      return [self]
+    result = self.parent.getPath()
+    result.append(self) # avoids quadratic time antipattern
+    return result
+
+  def getTruePos(self, basePos=(0, 0, 0)):
+    # xyz in my modelview matrix to xyz in world
+    glPushMatrix()
+    glLoadIdentity()
+##    glTranslatef(*basePos)
+    for rend in self.getPath():
+      rend.glMat()
+    M = np.matrix([[*basePos, 1]])
+    T = glGetModelview()
+    R = np.array(M*T)
+    glPopMatrix()
+    return Point(*R[0,0:3])
+
+  def getTrueRot(self, baseRot=(0, 0, 0)):
+    glPushMatrix()
+    glLoadIdentity()
+    glApplyRot(baseRot, invert=True)
+    for rend in self.getPath():
+      rend.glMat()
+    r = Rot.from_transmat(glGetModelview())
+    glPopMatrix()
+    return r
+
+  def getBasePos(self, truePos=(0, 0, 0)):
+    # inverse of getTruePos: xyz in world to xyz in my modelview matrix
+    glPushMatrix()
+    glLoadIdentity()
+    for rend in self.getPath()[-1::-1]:
+      rend.glMat(invert=True)
+    M = np.matrix([[*truePos, 1]])
+    T = glGetFloatv(GL_MODELVIEW_MATRIX)
+    R = np.array(M*T)
+    glPopMatrix()
+    return Point(*R[0,0:3])
+
+  def getDirBasePos(self, truePos=(0, 0, 0)):
+    # xyz in world to xyz in my directory's modelview matrix
+    glPushMatrix()
+    glLoadIdentity()
+    for rend in self.getPath()[-2::-1]:
+      rend.glMat(invert=True)
+    M = np.matrix([[*truePos, 1]])
+    T = glGetFloatv(GL_MODELVIEW_MATRIX)
+    R = np.array(M*T)
+    glPopMatrix()
+    return Point(*R[0,0:3])
+
+  def getBaseRot(self, trueRot=(0, 0, 0)):
+    glPushMatrix()
+    glLoadIdentity()
+    for rend in self.getPath()[-1::-1]:
+      rend.glMat(invert=True)
+    glApplyRot(trueRot)
+    r = Rot.from_transmat(glGetModelview())
+    glPopMatrix()
+    return r
+
+  def getDirBaseRot(self, trueRot=(0, 0, 0)):
+    glPushMatrix()
+    glLoadIdentity()
+    for rend in self.getPath()[-2::-1]:
+      rend.glMat(invert=True)
+    glApplyRot(trueRot)
+    r = Rot.from_transmat(glGetModelview())
+    glPopMatrix()
+    return r
+
+  def update_bbox(self):
+    self.vbo_bbox_vertices = []
+    for xyz in mix_permute(self.minPoint, self.maxPoint):
+      self.vbo_bbox_vertices.extend(xyz)
+    self.vbo_bbox_line_indices = [0,1, 0,2, 0,4,
+                                  1,3, 1,5, 2,3,
+                                  2,6, 4,5, 4,6,
+                                  3,7, 5,7, 6,7]
+
+    # update buffers
+    buffers = glGenBuffers(2)
+    glBindBuffer(GL_ARRAY_BUFFER, buffers[0])
+    glBufferData(GL_ARRAY_BUFFER,
+                 len(self.vbo_bbox_vertices)*4,
+                 (ctypes.c_float*len(self.vbo_bbox_vertices))(*self.vbo_bbox_vertices),
+                 GL_STATIC_DRAW)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers[1])
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 len(self.vbo_bbox_line_indices)*4,
+                 (ctypes.c_uint*len(self.vbo_bbox_line_indices))(*self.vbo_bbox_line_indices),
+                 GL_STATIC_DRAW)
+    self.vbo_bbox_buffers = buffers
+
+    self.update_planes()
+
+  def update_planes(self):
+    minx, miny, minz = self.minPoint
+    maxx, maxy, maxz = self.maxPoint
+    self.vbo_plane_vertices = [minx, miny,  0.0,
+                               minx, maxy,  0.0,
+                               maxx, maxy,  0.0,
+                               maxx, miny,  0.0,
+                                0.0, miny, minz,
+                                0.0, miny, maxz,
+                                0.0, maxy, maxz,
+                                0.0, maxy, minz,
+                               minx,  0.0, minz,
+                               maxx,  0.0, minz,
+                               maxx,  0.0, maxz,
+                               minx,  0.0, maxz,
+                               ]
+    self.vbo_plane_tri_indices = [ 0, 1, 2,  0, 2, 3,
+                                   4, 5, 6,  4, 6, 7,
+                                   8, 9,10,  8,10,11,
+                                  12,13,14, 12,14,15
+                                  ]
+    buffers = glGenBuffers(2)
+    glBindBuffer(GL_ARRAY_BUFFER, buffers[0])
+    glBufferData(GL_ARRAY_BUFFER,
+                 len(self.vbo_plane_vertices)*4,
+                 (ctypes.c_float*len(self.vbo_plane_vertices))(*self.vbo_plane_vertices),
+                 GL_STATIC_DRAW)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers[1])
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 len(self.vbo_plane_tri_indices)*4,
+                 (ctypes.c_uint*len(self.vbo_plane_tri_indices))(*self.vbo_plane_tri_indices),
+                 GL_STATIC_DRAW)
+    self.vbo_plane_buffers = buffers
+
+  def init_axes(self):
+    self.vbo_axes_vertices = [0.0, 0.0, 0.0,
+                              100000.0, 0.0, 0.0,
+                              0.0, 0.0, 0.0,
+                              0.0, 100000.0, 0.0,
+                              0.0, 0.0, 0.0,
+                              0.0, 0.0, -100000.0]
+    self.vbo_axes_colors = [1.0, 0.0, 0.0,
+                            1.0, 0.0, 0.0,
+                            0.0, 1.0, 0.0,
+                            0.0, 1.0, 0.0,
+                            0.0, 0.0, 1.0,
+                            0.0, 0.0, 1.0]
+    self.vbo_axes_line_indices = [0,1, 2,3, 4,5]
+    buffers = glGenBuffers(3)
+    glBindBuffer(GL_ARRAY_BUFFER, buffers[0])
+    glBufferData(GL_ARRAY_BUFFER,
+                 len(self.vbo_axes_vertices)*4,
+                 (ctypes.c_float*len(self.vbo_axes_vertices))(*self.vbo_axes_vertices),
+                 GL_STATIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, buffers[1])
+    glBufferData(GL_ARRAY_BUFFER,
+                 len(self.vbo_axes_colors)*4,
+                 (ctypes.c_float*len(self.vbo_axes_colors))(*self.vbo_axes_colors),
+                 GL_STATIC_DRAW)
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers[2])
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                 len(self.vbo_axes_line_indices)*4,
+                 (ctypes.c_uint*len(self.vbo_axes_line_indices))(*self.vbo_axes_line_indices),
+                 GL_STATIC_DRAW)
+    self.vbo_axes_buffers = buffers
+
+  def cycleCheck(self):
+    todo = [[self]]
+    while todo:
+      next_dir = todo.pop(-1)
+      for next_node in next_dir[-1].cycleCheckChildren():
+        if next_node in next_dir: # loop!
+          return True, next_dir + [next_node]
+        todo.append(next_dir+[next_node])
+    return False, []
+
+  def cycleCheckChildren(self):
+    return []
 
 class Model(Renderable):
   '''Describes polyhedron-like 3-D model in a position and orientation'''
@@ -75,16 +418,170 @@ class Model(Renderable):
     super().__init__(*args, **kwargs)
 
   def __repr__(self):
-    reprtuple = (repr(self.mesh), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale))
-    return "Model(%s, %s, pos=%s, rot=%s, scale=%s)"%reprtuple
+    reprtuple = (repr(self.mesh), repr(self.tex), repr(self.pos), repr(self.rot), repr(self.scale), repr(self.visible))
+    return "Model(%s, %s, pos=%s, rot=%s, scale=%s, visible=%s)"%reprtuple
 
-  def render(self):
-    if self.visible:
-      self.mesh.render(self.tex)
+  def __copy__(self):
+    # all attributes are immutable
+    return Model(self.mesh, self.tex, pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
+
+  def __deepcopy__(self, memo):
+    return copy.copy(self) # i am a dead end
+
+  def place(self):
+    glColor4f(1.0, 1.0, 1.0, 1.0)
+    self.mesh.render(self.tex)
+
+  def placeSel(self):
+    glEnable(GL_BLEND)
+    glColor4f(0.79, 1.0, 0.75, 0.5)
+    glLineWidth(2)
+    self.mesh.render_wireframe()
+    glDisable(GL_BLEND)
+
+  def update_bbox(self):
+    self.minPoint = Point(*self.mesh.min_xyz)
+    self.maxPoint = Point(*self.mesh.max_xyz)
+    super().update_bbox()
 
 class Light(Renderable):
   pass #TODO
 
+class Directory(Renderable):
+  # Provides an OpenGL matrix transformation to put other Renderables in
+  def __init__(self, rends=None, *args, **kwargs):
+    if rends is None:
+      rends = set()
+    self.rends = rends
+    super().__init__(*args, **kwargs)
+
+  def __iter__(self):
+    return self.rends.__iter__()
+
+  def __copy__(self):
+    return Link(self)
+
+  def __deepcopy__(self, memo):
+    directory = Directory(name=self.name)
+    for rend in self.rends:
+      directory.add(copy.deepcopy(rend))
+    return directory
+
+  def add(self, rend):
+    rend.setParent(self)
+
+  def remove(self, rend):
+    assert rend in self.rends
+    rend.setParent(None)
+
+  def discard(self, rend):
+    rend.setParent(None)
+
+  def clear(self):
+    self.rends.clear()
+
+  def render(self):
+    super().render()
+    if not self.visible:
+      return
+    for rend in self.rends:
+      glPushMatrix()
+      rend.render()
+      glPopMatrix()
+
+  def renderSelectedAE(self):
+    super().renderSelectedAE()
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderSelectedAE()
+      glPopMatrix()
+
+  def renderOverlay(self):
+    super().renderOverlay()
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderOverlay()
+      glPopMatrix()
+
+  def update_bbox(self):
+    if not self.rends:
+      self.minPoint = Point(0, 0, 0)
+      self.maxPoint = Point(0, 0, 0)
+      super().update_bbox()
+      return
+    min_xyz = [None, None, None]
+    max_xyz = [None, None, None]
+    for rend in self.rends:
+      for i, (minn, maxn, n) in enumerate(zip(min_xyz, max_xyz, rend.pos)):
+        if minn is None or n < minn:
+          min_xyz[i] = n
+        if maxn is None or n > maxn:
+          max_xyz[i] = n
+    self.minPoint = Point(*min_xyz)
+    self.maxPoint = Point(*max_xyz)
+    super().update_bbox()
+
+  def cycleCheckChildren(self):
+    return self.rends
+
+class Link(Renderable): # TODO: more overloads
+  # Be cautious while using these
+  # they're like link files in directories
+  # you could end up in a loop if not careful
+  def __init__(self, directory, *args, **kwargs):
+    # There should only be links to directories.
+    # non-pose attributes of all other Renderable objects
+    # should be immutable.
+    assert isinstance(directory, Directory)
+    self.directory = directory
+    super().__init__(*args, **kwargs)
+##    self.pos = directory.pos
+##    self.rot = directory.rot
+##    self.name = directory.name + "_COPY"
+
+  def __copy__(self):
+    return Link(self.directory)
+
+  def __deepcopy__(self, memo):
+    return copy.copy(self)
+
+  def render(self):
+    super().render()
+    if not self.visible:
+      return
+    for rend in self.directory.rends:
+      glPushMatrix()
+      rend.render()
+      glPopMatrix()
+
+  def renderSelectedAE(self):
+    super().renderSelectedAE()
+    for rend in self.directory.rends:
+      glPushMatrix()
+      rend.renderSelectedAE()
+      glPopMatrix()
+
+  def renderOverlay(self):
+    super().renderOverlay()
+    for rend in self.directory.rends:
+      glPushMatrix()
+      rend.renderOverlay()
+      glPopMatrix()
+
+  def update_bbox(self):
+    self.minPoint = self.directory.minPoint
+    self.maxPoint = self.directory.maxPoint
+    super().update_bbox()
+
+  def cycleCheckChildren(self):
+    return self.directory.rends
+
+class TreeError(Exception): # call when a tree is invalid (including links--they should not cycle to themselves)
+  def __init__(self, path):
+    self.path = path
+
+  def __str__(self):
+    return " > ".join(node.name for node in self.path)
 
 class Scene:
   '''Defines a list of renderable objects'''
@@ -106,13 +603,18 @@ class Scene:
   def discard(self, rend):
     self.rends.discard(rend)
 
-  def render(self, camera, aspect=None, mode="full", shader_name="basic"):
+  def clear(self):
+    self.rends.clear()
+
+  def render(self, camera, aspect=1.33, mode="full", shader_name="basic"):
+    global camPos, camTrueFovy
+    camPos = camera.pos
+    camTrueFovy = camera.getTrueFovy()
     glClearColor(0.0, 0.0, 0.1, 0.0)
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
-    
     glMatrixMode(GL_MODELVIEW)
 
-    ## SELECT SHADER
+    # Select shader
 ##    shader.use(shader_name)
 
     # Ambient lighting
@@ -127,26 +629,53 @@ class Scene:
 ##    glEnable(GL_LIGHT1)
 
     # Push camera position/perspective matrix onto stack
-    glLoadIdentity()
-    defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
-    gluPerspective(defacto_fovy, aspect, *camera.zRange)
-    gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
-    glTranslatef(*-camera.pos)
-    glPushMatrix()
-    
-    
-    for rend in self.rends:
-      if not rend.visible:
-        continue
-      
-      # Copy camera matrix from stack onto working matrix
-      glPopMatrix()
+    gluCamera(camera, aspect) # custom convenience function
+
+    for rend in self.rends & selected:
       glPushMatrix()
+      rend.render()
+      glPopMatrix()
 
-      rend.place()
+    for rend in self.rends - selected:
+      glPushMatrix()
+      rend.render()
+      glPopMatrix()
 
-    # Pop camera matrix from stack. Net change in stack: 0
-    glPopMatrix()
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderSelectedAE()
+      glPopMatrix()
+    
+    ## RENDER OVERLAY
+    glClear(GL_DEPTH_BUFFER_BIT)
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderOverlay()
+      glPopMatrix()
+
+##  def renderOverlay(self, camera, aspect=1.33): # PyQt's OpenGL context has an overlay layer built in
+##    glClearColor(0.0, 0.0, 0.0, 0.0)
+##    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+##    glMatrixMode(GL_MODELVIEW)
+##    gluCamera(camera, aspect)
+##
+##    for rend in self.rends:
+##      glPushMatrix()
+##      rend.renderOverlay()
+##      glPopMatrix()
+
+  def debug_tree(self):
+    def tree(rend):
+      yield "%d: %s"%(id(rend), rend.name)
+      for child in rend.cycleCheckChildren():
+        for line in tree(child):
+          yield "    " + line
+    print("SCENE")
+    for rend in self.rends:
+      for line in tree(rend):
+        print("    " + line)
+    print()
+    
 
 initialised = False
 
@@ -159,11 +688,11 @@ def initEngine(): # only call once context has been established
 
   # Enable wanted gl modes
   glEnable(GL_DEPTH_TEST)
-  glEnable(GL_TEXTURE_2D)
   glEnable(GL_NORMALIZE)
   glEnable(GL_POLYGON_SMOOTH)
   glEnable(GL_DITHER)
-  glEnable(GL_FOG)
+##  glBlendEquation(GL_FUNC_ADD)
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
   glFogi(GL_FOG_MODE, GL_EXP)
   glFogf(GL_FOG_END, 1000.0)
   glFogf(GL_FOG_DENSITY, 0.1)

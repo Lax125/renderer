@@ -1,10 +1,12 @@
-QListWidget {
-	background: #444444;
-}
+/*
+ * QListWidget, QTreeWidget {
+ * 	background: #444444;
+ * }
+ */
 
-QTabWidget {
+QTabWidget.BigTabs {
 	qproperty-iconSize: 30px;
 	font-size: 0px;
 }
 
-QTabBar::tab {height:50px; width:63px;}
+QTabWidget.BigTabs > QTabBar::tab {height:50px; width:63px;}

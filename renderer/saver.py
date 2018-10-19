@@ -1,22 +1,10 @@
-from init import *
+#!/usr/bin/python
+from all_modules import *
 
 from appdata import *
 from rotpoint import Rot, Point
-from engine import Model, Light
+from engine import Model, Light, Directory, Link
 from assetloader import Mesh, Tex, id_gen
-
-# The following function, quite appropriately named "get0",
-# returns a value that is equivalent to the following things:
-#   - x - x
-#   - e^(pi*i) + 1
-#   - The number of non-trivial (The number of non-trivial (The number of non-trivial (...))) found in the Riemann Zeta function
-#   - False
-#   - No
-#   - Zilch
-#   - Nada
-#   - The number of friends I have
-def get0():
-  return 0
 
 def lazyReadlines(f):
   l = f.readline()
@@ -55,13 +43,13 @@ class Saver:
     self.UE = app.UE
     self.R = app.R
     self.app = app
-    self.defaultMesh = self.R.loadMesh("./assets/meshes/_default.obj")
-    self.defaultTexture = self.R.loadTexture("./assets/textures/_default.png")
+    self.defaultMesh = Mesh("./assets/meshes/_default.obj")
+    self.defaultTexture = Tex("./assets/textures/_default.png")
     self.defaultMesh.delete()
     self.defaultTexture.delete()
 
   def update(self):
-    # copy save into tmp, ignoring unused asset files
+    # copy save into tmp, ignoring unused asset files (Even though there should be NO unused asset files)
     # construct a .obj-like file that specifies construction of a userenv
     try:
       shutil.rmtree(datapath("tmp"))
@@ -77,29 +65,49 @@ class Saver:
       # because having two competing standards is confusing
       meshPlacements = id_gen(1) # yields 1, 2, 3, ...
       texturePlacements = id_gen(1) # yields 1, 2, 3, ...
-      mDict = ddict(get0) # mesh ID -> placement index {1, 2, 3, ...}
-      tDict = ddict(get0) # texture ID -> placement index {1, 2, 3, ...}
+      mDict = ddict(int) # mesh ID -> placement index {1, 2, 3, ...}
+      tDict = ddict(int) # texture ID -> placement index {1, 2, 3, ...}
       for asset in self.UE.assets:
         if type(asset) is Mesh:
           shutil.copy(datapath("save/assets/meshes/%d.obj"%asset.ID),
                       datapath("tmp/assets/meshes/%d.obj"%asset.ID))
-          f.write(r"m '%s' %d %d"%(asset.name, asset.ID,
-                                  asset.cullbackface))
-          f.write("\n")
+          f.write("m '%s' %d %d\n"%(asset.name, asset.ID,
+                                    asset.cullbackface))
           mDict[asset.ID] = next(meshPlacements)
         elif type(asset) is Tex:
           shutil.copy(datapath("save/assets/textures/%d.png"%asset.ID),
                       datapath("tmp/assets/textures/%d.png"%asset.ID))
-          f.write(r"t '%s' %d"%(asset.name, asset.ID))
-          f.write("\n")
+          f.write("t '%s' %d\n"%(asset.name, asset.ID))
           tDict[asset.ID] = next(texturePlacements)
-      
-      for rend in self.UE.scene:
+
+      dirPlacements = id_gen(1)
+      dirDict = {None: 0} # directory -> placement index
+      def writeRendInfo(rend):
         if type(rend) is Model:
-          f.write(r"model '%s' %d %d %s %s %d"%(rend.name, mDict[rend.mesh.ID], tDict[rend.tex.ID],
-                                                        strPosRot(rend), rend.scale,
-                                                        rend.visible))
-          f.write("\n")
+          f.write("model '%s' %d %d %s %s %d\n"%(rend.name, mDict[rend.mesh.ID], tDict[rend.tex.ID],
+                                                 strPosRot(rend), rend.scale,
+                                                 rend.visible))
+        elif type(rend) is Directory:
+          dirDict[rend] = next(dirPlacements)
+          f.write("DIR '%s' %s %s %d\n"%(rend.name, strPosRot(rend), rend.scale, rend.visible))
+          for child in rend.rends:
+            writeRendInfo(child)
+          f.write("END\n")
+
+      def writeLinkInfo(rend):
+        if type(rend) is Link:
+          f.write("SYMLINK '%s' %d %d %s %s %d\n"%(rend.name, dirDict[rend.parent], dirDict[rend.directory],
+                                                   strPosRot(rend), rend.scale, rend.visible))
+        elif type(rend) is Directory:
+          for child in rend.rends:
+            writeLinkInfo(child)
+        
+      for rend in self.UE.scene:
+        writeRendInfo(rend)
+
+      for rend in self.UE.scene:
+        writeLinkInfo(rend)
+      
       f.write(r"cam %s %s %s"%(strPosRot(self.UE.camera),
                                 self.UE.camera.fovy,
                                 self.UE.camera.zoom))
@@ -136,9 +144,9 @@ class Saver:
   def load_appdata(self):
     meshes = [self.defaultMesh]
     textures = [self.defaultTexture]
-    print("BEGIN")
+    directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
+    dirStack = [None]
     for line in lazyReadlines(dataopen("tmp/blueprint.dat", "r")):
-      print("PARSE:", line, end="")
       words = shlex.split(line)
       if not words:
         continue
@@ -152,7 +160,7 @@ class Saver:
         if ID == 0:
           meshes.append(self.defaultMesh)
         else:
-          new_mesh = self.R.loadMesh(datapath("tmp/assets/meshes/%d.obj"%ID), name=name, cullbackface=cullbackface)
+          new_mesh = Mesh(datapath("tmp/assets/meshes/%d.obj"%ID), name=name, cullbackface=cullbackface)
           self.app.add(new_mesh)
           meshes.append(new_mesh)
           
@@ -161,7 +169,7 @@ class Saver:
         if ID == 0:
           textures.append(self.defaultTexture)
         else:
-          new_tex = self.R.loadTexture(datapath("tmp/assets/textures/%d.png"%ID), name=name)
+          new_tex = Tex(datapath("tmp/assets/textures/%d.png"%ID), name=name)
           self.app.add(new_tex)
           textures.append(new_tex)
 
@@ -173,12 +181,28 @@ class Saver:
                           visible=visible, name=name)
         self.app.add(new_model)
 
+      elif command == "DIR":
+        name, x,y,z,rx,ry,rz, scale, visible\
+          = castList([str, *[float]*6, float, int], args)
+        new_directory = Directory(pos=Point(x,y,z), rot=Rot(rx,ry,rz), scale=scale, visible=visible, name=name)
+        self.app.add(new_directory)
+        directories.append(new_directory)
+        dirStack.append(new_directory)
+        self.app.select(dirStack[-1])
+
+      elif command == "END":
+        dirStack.pop(-1)
+        self.app.select(dirStack[-1])
+
+      elif command == "SYMLINK":
+        name, fromIndex, toIndex, x,y,z,rx,ry,rz, scale, visible\
+          = castList([str, int, int, *[float]*6, float, int], args)
+        new_symlink = Link(directories[toIndex], pos=Point(x,y,z), rot=Rot(rx,ry,rz), visible=visible, name=name)
+        self.app.add(new_symlink, directory=directories[fromIndex])
+
       elif command == "cam":
         x,y,z,rx,ry,rz, fovy, zoom = castList([*[float]*6, float, float], args)
         self.R.configCamera(Point(x,y,z), Rot(rx, ry, rz), fovy, zoom)
-
-    print("END")
-    print()
 
   def canRestore(self):
     return os.path.isfile(datapath("tmp/blueprint.dat"))

@@ -1,8 +1,8 @@
 #!/usr/bin/python
-from init import *
+from all_modules import *
 
 try:
-  DATAPATH = os.path.join(os.getenv("APPDATA"), "Renderer")
+  DATAPATH = os.path.join(os.getenv("APPDATA"), APPDATA_FOLDERNAME)
   try:
     os.makedirs(DATAPATH)
   except:

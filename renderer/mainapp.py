@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 '''
 gui.py
@@ -6,19 +7,28 @@ gui.py
 Makes the graphical application and runs the main systems
 '''
 
-from init import *
+from all_modules import *
 
 from rotpoint import Rot, Point
-from assetloader import Asset, Mesh, Tex
-from engine import Renderable, Model, Light, initEngine
+from assetloader import id_gen, Asset, Mesh, Tex
+from engine import Renderable, Model, Light, Directory, Link, initEngine, TreeError
+import engine
 from userenv import UserEnv
 from remote import Remote
 from saver import Saver
 
+def basePosRot(truePos, trueRot, sel):
+  if sel is None:
+    return truePos, trueRot
+  elif isinstance(sel, Directory):
+    return sel.getBasePos(truePos), sel.getBaseRot(trueRot)
+  else:
+    return sel.getDirBasePos(truePos), sel.getDirBaseRot(trueRot)
+
 def shortfn(fn):
   return os.path.split(fn)[1]
 
-def cyclamp(x, R): # Like modulo, but based on cutom range
+def cyclamp(x, R): # Like modulo, but based on custom range
   a, b = R
   return (x-a)%(b-a) + a
 
@@ -30,7 +40,9 @@ ROT_DELTAS = {Qt.Key_Left: (0, -2, 0),
               Qt.Key_Down: (-2, 0, 0),
               Qt.Key_Up: (2, 0, 0),
               Qt.Key_Comma: (0, 0, -2),
-              Qt.Key_Period: (0, 0, 2)}
+              Qt.Key_Period: (0, 0, 2),
+              Qt.Key_Less: (0, 0, -2),
+              Qt.Key_Greater: (0, 0, 2)}
 
 POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
               Qt.Key_D: (5, 0, 0),
@@ -38,6 +50,9 @@ POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
               Qt.Key_W: (0, 0, -5),
               Qt.Key_F: (0, -5, 0),
               Qt.Key_R: (0, 5, 0)}
+
+def keyModFlags():
+  return QCoreApplication.instance().keyboardModifiers()
 
 def copyObjList(ql):
   cql = QListWidget()
@@ -49,7 +64,7 @@ def copyObjList(ql):
     citem.setBackground(item.background())
     citem.setText(item.text())
     cql.addItem(citem)
-  cql.ofind = ql.ofind
+  cql.find = ql.find
   return cql
 
 def loadQTable(qtable, arr):
@@ -61,6 +76,35 @@ def loadQTable(qtable, arr):
       item = QTableWidgetItem(str(element))
       qtable.setItem(rn, cn, item)
 
+class BetterSlider(QWidget):
+  valueChanged = pyqtSignal()
+  
+  def __init__(self, slider, suffix=""):
+    super().__init__()
+    self.blocking = False
+    spinner = QSpinBox(minimum=slider.minimum(), maximum=slider.maximum(), value=slider.value(), suffix=suffix)
+    def setValue(n):
+      slider.blockSignals(True)
+      spinner.blockSignals(True)
+      slider.setValue(n)
+      spinner.setValue(n)
+      slider.blockSignals(False)
+      spinner.blockSignals(False)
+      if not self.blocking:
+        self.valueChanged.emit()
+    slider.valueChanged.connect(setValue)
+    spinner.valueChanged.connect(setValue)
+    L = QHBoxLayout()
+    L.setContentsMargins(0, 0, 0, 0)
+    self.setLayout(L)
+    L.addWidget(slider)
+    L.addWidget(spinner)
+    self.setValue = slider.setValue
+    self.value = slider.value
+
+  def blockSignals(self, doBlock):
+    self.blocking = doBlock
+
 class glWidget(QGLWidget):
   '''OpenGL+QT widget'''
   def __init__(self, *args, **kwargs):
@@ -68,7 +112,7 @@ class glWidget(QGLWidget):
     self.parent = self.parentWidget()
     self.dims = (100, 100)
     self.aspect = 1.0
-    self.refresh_rate = 60
+    self.refresh_rate = 30
     self.refresh_period = ceil(1000/self.refresh_rate)
     self.timer = QTimer()
     self.timer.setInterval(self.refresh_period)
@@ -78,6 +122,13 @@ class glWidget(QGLWidget):
     self.dt = 0
     self.timer.start()
     self.setFocusPolicy(Qt.StrongFocus)
+    self.setMouseTracking(True)
+
+    self.sel_dv = None # dxyz's for camera to each selected rend
+    self.sel_dr = None # distance from camera to monoselected
+    self.mousePos = None
+    self.dragging = False
+    self.cam_rot = None
 
   def initializeGL(self):
     initEngine()
@@ -92,6 +143,14 @@ class glWidget(QGLWidget):
     super().resizeGL(w, h)
 
   def keyPressEvent(self, event):
+    if event.key() == Qt.Key_Escape:
+      self.parent.select(None)
+    elif (event.key() == Qt.Key_Shift):
+      if isinstance(engine.monoselected, Renderable):
+        self.parent.R.lookAt(engine.monoselected)
+      else:
+        self.parent.R.lookAt(Point(0, 0, 0)) # look at origin
+      self.update()
     self.heldKeys.add(event.key())
 
   def keyReleaseEvent(self, event):
@@ -102,24 +161,127 @@ class glWidget(QGLWidget):
     self.dt = now - self.lastt
     self.lastt = now
     if self.handleHeldKeys():
-      self.glDraw()
+      self.update()
+      self.parent.updateCamEdit()
+      self.parent.updateSelEdit()
+      self.parent.updateSelected()
 
   def handleHeldKeys(self):
+    cam = self.parent.UE.camera
+    sel = engine.monoselected
+    selRends = [obj for obj in engine.selected if isinstance(obj, Renderable)]
+    
     count = 0
     dt = self.dt
+
+    dr = [0.0, 0.0, 0.0]
+    rotated = False
     for k, (drx, dry, drz) in ROT_DELTAS.items():
       if k in self.heldKeys:
+        rotated = True
         count += 1
+        dr[0] += drx
+        dr[1] += dry
+        dr[2] += drz
+
+    if rotated:
+      drx, dry, drz = dr
+      if selRends and (keyModFlags() & Qt.ShiftModifier):
+        self.parent.R.changeRendRot(engine.monoselected, dt*drx, dt*dry, dt*drz)
+      else:
         self.parent.R.changeCameraRot(dt*drx, dt*dry, dt*drz)
 
+    dxyz = [0.0, 0.0, 0.0]
+    moved = False
     for k, (dx, dy, dz) in POS_DELTAS.items():
       if k in self.heldKeys:
+        moved = True
         count += 1
-        dp = dt * self.parent.UE.camera.rot.get_transmat(invert=True) * Point(dx, dy, dz)
-        self.parent.R.moveCamera(*dp)
+        dxyz[0] += dx
+        dxyz[1] += dy
+        dxyz[2] += dz
+        
+    if moved:
+      dv = Point(*dxyz)
+      dp = dt * cam.rot.get_transmat(invert=True) * dv
+      if selRends and (keyModFlags() & Qt.ShiftModifier):
+        if self.sel_dv is None:
+          self.parent.R.lookAt(engine.monoselected)
+          self.sel_dv = dict()
+          for rend in selRends:
+            selpos = rend.getTruePos()
+            self.sel_dv[rend] = selpos - cam.pos
+        cam.pos += dp
+        for rend in selRends:
+          new_selpos = cam.pos + self.sel_dv[rend]
+          self.parent.R.moveRendTo(rend, *new_selpos)
+      else:
+        cam.pos += dp
+        
+    if not moved:
+      self.sel_dv = None
 
-    self.parent.updateCamEdit()
     return count
+
+  def wheelEvent(self, event):
+    self.setFocus()
+    cam = self.parent.UE.camera
+    sel = engine.monoselected
+    if keyModFlags() & Qt.ShiftModifier:
+      if isinstance(sel, Renderable):
+        selpos = sel.getTruePos()
+      else:
+        selpos = Point(0, 0, 0)
+      dx0, dy0, dz0 = cam.pos - selpos
+      dist0 = (dx0**2+dy0**2+dz0**2)**0.5
+      dist = min(max(0.1, dist0*10**(-event.angleDelta().y()/(360*10))), 2147483647.0)
+      cam.pos = selpos - (cam.rot.get_forward_vector(invert=True)*dist)
+      self.sel_dr = dist
+    else:
+      cam.zoom *= 10**(event.angleDelta().y()/(360*10))
+      cam.zoom = min(max(1.0, cam.zoom), 1000.0)
+    self.parent.updateCamEdit()
+    self.update()
+
+  def mousePressEvent(self, event):
+    self.mousePos = event.x(), event.y()
+    self.cam_rot = self.parent.UE.camera.rot
+    self.dragging = True
+
+  def mouseMoveEvent(self, event):
+    cam = self.parent.UE.camera
+    sel = engine.monoselected
+    if self.dragging:
+      if keyModFlags() & Qt.ShiftModifier:
+        if isinstance(sel, Renderable):
+          selpos = sel.getTruePos()
+        else:
+          selpos = Point(0.0, 0.0, 0.0)
+        if False: # TODO: if mousePos is close to center, rotate monoselected instead of the camera around the monoselected
+          pass
+        else:
+          if self.sel_dr is None:
+            self.parent.R.lookAt(selpos)
+            self.sel_dr = sum(dn**2 for dn in selpos - cam.pos)**0.5
+          # shift the angle appropriately
+          X, Y = self.mousePos
+          dX, dY = event.x() - X, event.y() - Y
+          cam.rot = Rot(-dY/100, dX/100, 0)*self.cam_rot
+          # position the camera such that it remains at the same distance
+          cam.pos = selpos - cam.rot.get_transmat(invert=True)*Point(0, 0, -self.sel_dr)
+          
+      else:
+        X, Y = self.mousePos
+        dX, dY = event.x() - X, event.y() - Y
+        cam.rot = Rot(dY/100, -dX/100, 0)*self.cam_rot
+        
+      self.parent.R.rectifyCamera()
+      self.update()
+
+  def mouseReleaseEvent(self, event):
+    self.dragging = False
+    self.sel_dr = None
+    
 
 class ObjList(QListWidget):
   '''QListWidget of environment objects (Mesh, Tex, Model, Light)'''
@@ -131,18 +293,42 @@ class ObjList(QListWidget):
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
     self.itemClicked.connect(self.onItemClicked)
+    self.itemDoubleClicked.connect(self.onItemDoubleClicked)
+    self.itemSelectionChanged.connect(self.onItemSelectionChanged)
 
   def onItemClicked(self, item):
-    self.parent.select(item.obj)
+    if isinstance(item.obj, Renderable):
+      item.obj.visible = item.checkState()==2
+    self.onItemSelectionChanged()
+
+  def onItemDoubleClicked(self, item):
+    if isinstance(item.obj, Renderable):
+      self.parent.R.lookAt(item.obj)
+
+  def onItemSelectionChanged(self):
+    items = self.selectedItems()
+    engine.selected = set([item.obj for item in items])
+    if items:
+      self.parent.select(items[0].obj)
+    else:
+      self.parent.select(None)
 
   def add(self, obj):
     new_item = QListWidgetItem(obj.name)
     new_item.obj = obj
     if type(obj) in self.iconDict:
       new_item.setIcon(self.iconDict[type(obj)])
-    if type(obj) in self.bgDict:
-      new_item.setBackground(self.bgDict[type(obj)])
+##    if type(obj) in self.bgDict:
+##      new_item.setBackground(self.bgDict[type(obj)])
     self.addItem(new_item)
+    if isinstance(obj, Renderable):
+      flags = new_item.flags()|Qt.ItemIsUserCheckable
+      if type(obj) in [Model, Light, Link]:
+        flags |= Qt.ItemNeverHasChildren
+      if isinstance(obj, Directory):
+        flags |= Qt.ShowIndicator
+      new_item.setFlags(flags)
+      new_item.setCheckState(obj.visible*2)
     return new_item
 
   def keyPressEvent(self, event):
@@ -156,14 +342,204 @@ class ObjList(QListWidget):
     for i in range(self.count()):
       item = self.item(i)
       item.setText(item.obj.name)
-##    super().update()
+      if isinstance(item.obj, Renderable):
+        item.setCheckState(item.obj.visible*2)
 
-  def ofind(self, obj):
+  def find(self, obj):
     for i in range(self.count()):
       item = self.item(i)
       if item.obj is obj:
         return i
 
+  def take(self, obj):
+    return self.takeItem(self.find(obj))
+
+class ObjNode(QTreeWidgetItem):
+  objTypenameDict = {Mesh: "Mesh",
+                     Tex: "Texture",
+                     Model: "Model",
+                     Light: "Light",
+                     Directory: "GROUP",
+                     Link: "SYMLINK"}
+  iconDict = dict()
+  def __init__(self, obj, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
+    self.obj = obj
+    self.setText(0, obj.name)
+    self.setText(1, self.objTypenameDict[type(obj)])
+    if type(obj) in self.iconDict:
+      self.setIcon(0, self.iconDict[type(obj)])
+##    if type(obj) in self.fgDict:
+##      self.setForeground(0, self.fgDict[type(obj)])
+    if isinstance(obj, Renderable):
+      self.setFlags(self.flags()|Qt.ItemIsUserCheckable)
+      self.setCheckState(2, obj.visible*2)
+    if isinstance(obj, Directory):
+      self.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+
+  def __lt__(self, node, typeOrder=[Directory, Link, Light, Model, Tex, Mesh]):
+    column = self.treeWidget().sortColumn()
+    if column == 1:
+      return typeOrder.index(type(self.obj)) < typeOrder.index(type(node.obj))
+    elif column == 2:
+      return (isinstance(self.obj, Renderable)
+          and isinstance(node.obj, Renderable)
+          and self.obj.visible < node.obj.visible)
+    else:
+      return self.obj.name < node.obj.name
+    
+  def find(self, obj):
+    for i in range(self.childCount()):
+      child = self.child(i)
+      if child.obj is obj:
+        return i
+
+  def take(self, obj):
+    i = self.find(obj)
+    return self.takeChild(i)
+
+  def update(self):
+    self.setText(0, self.obj.name)
+    if isinstance(self.obj, Renderable):
+      self.setCheckState(2, self.obj.visible*2)
+    for i in range(self.childCount()):
+      self.child(i).update()
+
+class ObjTree(QTreeWidget): # TODO
+  def __init__(self, *args, **kwargs):
+    super().__init__(*args, **kwargs)
+    self.setSelectionMode(QAbstractItemView.SingleSelection)
+    self.setDragEnabled(True)
+    self.viewport().setAcceptDrops(True)
+    self.setDropIndicatorShown(True)
+    self.setDragDropMode(QAbstractItemView.InternalMove)
+    self.parent = self.parentWidget()
+    self.objNodeDict = dict() # asset/renderable --> node
+    self.groupNums = id_gen()
+    self.itemChanged.connect(self.onItemChanged)
+    self.itemSelectionChanged.connect(self.onItemSelectionChanged)
+    self.itemDoubleClicked.connect(self.onItemDoubleClicked)
+    self.setSortingEnabled(True)
+    
+  def add(self, obj, directory=None):
+    '''Adds ObjNode to a directory'''
+    node = ObjNode(obj)
+    self.objNodeDict[obj] = node
+    self.move(obj, directory)
+    if isinstance(obj, Directory):
+      for child in obj.rends:
+        self.add(child, directory=obj)
+    return node
+
+  def find(self, obj):
+    '''Returns index of top level item that matches obj'''
+    for i in range(self.topLevelItemCount()):
+      item = self.topLevelItem(i)
+      if item.obj is obj:
+        return i
+
+  def take(self, obj):
+    node = self.objNodeDict[obj]
+    parent = node.parent()
+    if parent is None: # this node is top level
+      node = self.takeTopLevelItem(self.find(obj))
+    else:
+      node = parent.take(obj)
+    del self.objNodeDict[obj]
+    return node
+
+  def move(self, obj, directory):
+    '''Moves obj to directory'''
+    node = self.objNodeDict[obj]
+    if directory is None:
+      self.addTopLevelItem(node)
+    else:
+      self.objNodeDict[directory].addChild(node)
+    return node
+
+  def update(self):
+    for i in range(self.topLevelItemCount()):
+      self.topLevelItem(i).update()
+
+  def select(self, obj):
+    self.blockSignals(True)
+    self.selectionModel().clearSelection()
+    if obj in self.objNodeDict:
+      self.objNodeDict[obj].setSelected(True)
+      self.showObj(obj)
+    self.blockSignals(False)
+
+  def showObj(self, obj):
+    node = self.objNodeDict[obj].parent()
+    while node is not None:
+      node.setExpanded(True)
+      node = node.parent()
+
+  def getCurrentDir(self):
+    selItems = self.selectedItems()
+    if selItems:
+      sel = selItems[0].obj
+      if isinstance(sel, Directory):
+        return sel
+      parentItem = self.objNodeDict[sel].parent()
+      if parentItem is None:
+        return None
+      return parentItem.obj
+    return None
+
+##  def dropEvent(self, event):
+##    pass
+
+  def onItemChanged(self, item):
+    if isinstance(item.obj, Renderable):
+      item.obj.visible = item.checkState(2)==2
+
+  def onItemSelectionChanged(self):
+    selItems = self.selectedItems()
+    if selItems:
+      self.parent.select(selItems[0].obj)
+
+  def onItemDoubleClicked(self, item):
+    if isinstance(item.obj, Renderable):
+      if keyModFlags() & Qt.ShiftModifier:
+        self.parent.R.moveCameraTo(item.obj)
+      else:
+        self.parent.R.lookAt(item.obj)
+
+  def keyPressEvent(self, event):
+    cam = self.parent.UE.camera
+    selItems = self.selectedItems()
+    if selItems:
+      selItem = selItems[0]
+      sel = selItem.obj
+    else:
+      selItem = None
+      sel = None
+    k = event.key()
+    if k == Qt.Key_Escape:
+      self.parent.select(None)
+    elif k == Qt.Key_Delete:
+      self.parent.delete(sel)
+    elif k == Qt.Key_Space:
+      selItems = self.selectedItems()
+      if selItems:
+        selItems[0].setExpanded(not selItems[0].isExpanded())
+    elif k == Qt.Key_Left:
+      self.parent.selectParent()
+    elif k == Qt.Key_Right:
+      self.parent.selectFirstChild()
+    elif k == Qt.Key_Up:
+      self.parent.selectPrevSibling()
+    elif k == Qt.Key_Down:
+      self.parent.selectNextSibling()
+
+    def mousePressEvent(self, event):
+      print(event.pos())
+      item = self.indexAt(event.pos())
+      if (item.row() == item.column() == -1):
+        self.parent.select(None)
+  
 class Modal(QDialog):
   '''A dialog box that grabs focus until closed'''
   def __init__(self, *args, **kwargs):
@@ -234,7 +610,6 @@ def CBrush(hexcolor):
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
   def __init__(self, parent=None):
-    self.selected = None
     self.UE = UserEnv()
     self.R = Remote(self.UE)
 
@@ -245,10 +620,10 @@ class MainApp(QMainWindow):
     self._init_hotkeys()
     self.resize(1000, 500)
     self.setWindowIcon(self.icons["Model"])
-    self.setWindowTitle("Renderer")
+    self.setWindowTitle(APPNAME)
+    self.newProject(silent=True)
     self.show()
     self.S = Saver(self)
-    self.setCurrentFilename(None)
     
     self.setAcceptDrops(True)
   
@@ -279,6 +654,9 @@ class MainApp(QMainWindow):
                      ("Texture", r"./assets/icons/texture.png"),
                      ("Model", r"./assets/icons/model.png"),
                      ("Light", r"./assets/icons/light.png"),
+                     ("Object Group", r"./assets/icons/objectgroup.png"),
+                     ("Link", r"./assets/icons/link.png"),
+                     ("3D Scene", r"./assets/icons/3dscene.png"),
                      ("Scene", r"./assets/icons/scene.png"),
                      ("Edit", r"./assets/icons/edit.png"),
                      ("Camera", r"./assets/icons/camera.png"),
@@ -289,16 +667,21 @@ class MainApp(QMainWindow):
     self.fonts = dict()
     self.fonts["heading"] = QFont("Calibri", 16, QFont.Bold)
 
-    ObjList.iconDict = {Mesh: self.icons["Mesh"],
-                        Tex: self.icons["Texture"],
-                        Model: self.icons["Model"],
-                        Light: self.icons["Light"]}
+    iconDict = {Mesh: self.icons["Mesh"],
+                Tex: self.icons["Texture"],
+                Model: self.icons["Model"],
+                Light: self.icons["Light"],
+                Directory: self.icons["Object Group"],
+                Link: self.icons["Link"]}
     
-    ObjList.bgDict = {Mesh: CBrush("#e2ffd9"), # light green
-                      Tex: CBrush("#eadcff"), # light blue
-                      Model: CBrush("#b2fffd"), # light cyan
-                      Light: CBrush("#ffffc5") # light yellow
-                      }
+    colorDict = {Mesh: CBrush("#e2ffd9"), # light green
+                 Tex: CBrush("#eadcff"), # light blue
+                 Model: CBrush("#b2fffd"), # light cyan
+                 Light: CBrush("#ffffc5") # light yellow
+                 }
+
+    ObjList.iconDict = ObjNode.iconDict = iconDict
+    ObjList.bgDict = ObjNode.fgDict = colorDict
 
   def _make_widgets(self):
     '''Initialise all widgets'''
@@ -312,18 +695,26 @@ class MainApp(QMainWindow):
     self.fileMenu_save = QAction(self.icons["Save"], "&Save project")
     self.fileMenu_saveas = QAction(self.icons["Save"], "Save project &as...")
     self.fileMenu_exportimage = QAction(self.icons["Image File"], "&Export image")
+    self.fileMenu_loadmeshes = QAction(self.icons["Mesh"], "Load &meshes")
+    self.fileMenu_loadtextures = QAction(self.icons["Texture"], "Load &textures")
     file.addAction(self.fileMenu_new)
     file.addAction(self.fileMenu_open)
     file.addAction(self.fileMenu_save)
     file.addAction(self.fileMenu_saveas)
     file.addSeparator()
-    file.addAction(self.icons["Mesh"], "Load &meshes", self.loadMeshes)
-    file.addAction(self.icons["Texture"], "Load &textures", self.loadTextures)
+    file.addAction(self.fileMenu_loadmeshes)
+    file.addAction(self.fileMenu_loadtextures)
     file.addSeparator()
     file.addAction(self.fileMenu_exportimage)
     scene = bar.addMenu("&Scene")
-    scene.addAction(self.icons["Model"], "Make &models", self.makeModels)
-    scene.addAction(self.icons["Light"], "Make &lights", self.makeLights)
+    self.sceneMenu_makemodels = QAction(self.icons["Model"], "Make &models")
+    self.sceneMenu_makelights = QAction(self.icons["Light"], "Make &lights")
+    self.sceneMenu_makegroups = QAction(self.icons["Object Group"], "Make &groups")
+    self.sceneMenu_quickgroup = QAction(self.icons["Object Group"], "Make group &here")
+    scene.addAction(self.sceneMenu_makemodels)
+    scene.addAction(self.sceneMenu_makelights)
+    scene.addAction(self.sceneMenu_makegroups)
+    scene.addAction(self.sceneMenu_quickgroup)
     view = bar.addMenu("&View")
     self.viewMenu_env = QAction(self.icons["Scene"], "E&nvironment", checkable=True)
     self.viewMenu_edit = QAction(self.icons["Edit"], "&Edit", checkable=True)
@@ -337,20 +728,27 @@ class MainApp(QMainWindow):
     
     self.envPane = QDockWidget("Environment", self)
     self.env = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
+    self.env.setProperty("class", "BigTabs")
     self.meshList = ObjList(self)
     self.texList = ObjList(self)
     self.modelList = ObjList(self)
     self.lightList = ObjList(self)
+    self.rendTree = ObjTree(self)
+    self.rendTree.setHeaderLabels(["Name", "Type", "Visible?"])
     self.env.addTab(self.meshList, self.icons["Mesh"], "")
     self.env.addTab(self.texList, self.icons["Texture"], "")
-    self.env.addTab(self.modelList, self.icons["Model"], "")
-    self.env.addTab(self.lightList, self.icons["Light"], "")
+    self.modelList.hide()
+    self.lightList.hide()
+##    self.env.addTab(self.modelList, self.icons["Model"], "")
+##    self.env.addTab(self.lightList, self.icons["Light"], "")
+    self.env.addTab(self.rendTree, self.icons["3D Scene"], "")
     self.envPane.setWidget(self.env)
     self.envPane.setFloating(False)
     self.addDockWidget(Qt.LeftDockWidgetArea, self.envPane)
 
     self.editPane = QDockWidget("Edit", self)
     self.edit = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
+    self.edit.setProperty("class", "BigTabs")
     self.camEdit = QWidget()
     self.camScrollArea = VerticalScrollArea()
     self.selEdit = ResizableStackedWidget()
@@ -376,7 +774,7 @@ class MainApp(QMainWindow):
     self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
     self.logPane.setWidget(self.log)
     self.addDockWidget(Qt.BottomDockWidgetArea, self.logPane)
-    self.logEntry("Info", "Welcome to Renderer 0.5.0")
+    self.logEntry("Info", "Welcome to %s (beta version)"%APPNAME)
     self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
 
     self.fileMenu_new.triggered.connect(self.newProject)
@@ -384,6 +782,12 @@ class MainApp(QMainWindow):
     self.fileMenu_save.triggered.connect(self.saveProject)
     self.fileMenu_saveas.triggered.connect(self.saveasProject)
     self.fileMenu_exportimage.triggered.connect(self.exportImage)
+    self.fileMenu_loadmeshes.triggered.connect(self.loadMeshes)
+    self.fileMenu_loadtextures.triggered.connect(self.loadTextures)
+    self.sceneMenu_makemodels.triggered.connect(self.makeModels)
+    self.sceneMenu_makelights.triggered.connect(self.makeLights)
+    self.sceneMenu_makegroups.triggered.connect(self.makeGroups)
+    self.sceneMenu_quickgroup.triggered.connect(self.quickGroup)
     self.viewMenu_env.triggered.connect(self.curryTogglePane(self.envPane))
     self.viewMenu_edit.triggered.connect(self.curryTogglePane(self.editPane))
     self.viewMenu_log.triggered.connect(self.curryTogglePane(self.logPane))
@@ -398,7 +802,33 @@ class MainApp(QMainWindow):
     quickShortcut("Ctrl+O", self.fileMenu_open)
     quickShortcut("Ctrl+S", self.fileMenu_save)
     quickShortcut("Ctrl+Shift+S", self.fileMenu_saveas)
+    quickShortcut("F12", self.fileMenu_saveas) # Windows standard
     quickShortcut("Ctrl+E", self.fileMenu_exportimage)
+    quickShortcut("Ctrl+M", self.fileMenu_loadmeshes)
+    quickShortcut("Ctrl+T", self.fileMenu_loadtextures)
+
+    quickShortcut("Ctrl+Shift+M", self.sceneMenu_makemodels)
+    quickShortcut("Ctrl+Shift+L", self.sceneMenu_makelights)
+    quickShortcut("Ctrl+Shift+G", self.sceneMenu_makegroups)
+    quickShortcut("Ctrl+G", self.sceneMenu_quickgroup)
+
+    def quickKeybind(keySeq, func):
+      shortcut = QShortcut(QKeySequence(keySeq), self)
+      shortcut.activated.connect(func)
+    self.keyBind_selectparent = quickKeybind("Alt+Left", self.selectParent)
+    self.keyBind_selectfirstchild = quickKeybind("Alt+Right", self.selectFirstChild)
+    self.keyBind_selectprevsibling = quickKeybind("Alt+Up", self.selectPrevSibling)
+    self.keyBind_selectnextsibling = quickKeybind("Alt+Down", self.selectNextSibling)
+    self.keyBind_copyselected = quickKeybind("Ctrl+C", self.copySelected)
+    self.keyBind_cutselected = quickKeybind("Ctrl+X", self.cutSelected)
+    self.keyBind_deeppasteclipboard = quickKeybind("Ctrl+V", self.deepPasteClipboard)
+    self.keyBind_deeppasteselected = quickKeybind("Shift+;", self.deepPasteSelected) # used when moving with Shift
+    self.keyBind_shallowpasteclipboard = quickKeybind("Ctrl+Shift+V", self.shallowPasteClipboard)
+    self.keyBind_shallowpasteselected = quickKeybind("Shift+'", self.shallowPasteSelected) # used when moving wih Shift
+    self.keyBind_focuscenter = quickKeybind("/", self.focusCenter)
+
+  def focusCenter(self):
+    self.centralWidget().setFocus()
 
   def updateMenu(self):
     self.viewMenu_env.setChecked(self.envPane.isVisible())
@@ -430,6 +860,7 @@ class MainApp(QMainWindow):
     self.log.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
     self.log.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
     self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+    self.repaint()
 
   def clearLists(self):
     '''Empty all QListWidget's'''
@@ -437,23 +868,32 @@ class MainApp(QMainWindow):
     self.texList.clear()
     self.modelList.clear()
     self.lightList.clear()
+    self.rendTree.clear()
 
-  def addEnvObj(self, envobj):
+  def addEnvObj(self, envobj, directory=None):
     '''Adds environment object into appropriate QListWidget'''
+    if isinstance(envobj, Renderable):
+      self.rendTree.add(envobj, directory)
     QListDict = {Mesh: self.meshList,
                  Tex: self.texList,
                  Model: self.modelList,
                  Light: self.lightList}
-    L = QListDict[type(envobj)]
-    item = L.add(envobj)
+    if type(envobj) in QListDict:
+      L = QListDict[type(envobj)]
+      L.add(envobj)
 
-  def add(self, obj):
-    if self.R.add(obj):
+  def add(self, obj, directory=None):
+    if directory is None:
+      directory = self.rendTree.getCurrentDir()
+    if self.R.add(obj, directory):
       return
-    self.addEnvObj(obj)
+    self.addEnvObj(obj, directory)
+##    self.UE.scene.debug_tree()
 
-  def setCurrentFilename(self, fn):
+  def setCurrentFilename(self, fn, silent=False):
     self.filename = fn
+    if silent:
+      return
     if self.filename is None:
       self.setWindowTitle("*New Project*")
     else:
@@ -463,14 +903,15 @@ class MainApp(QMainWindow):
     '''Clear user environment and QListWidgets'''
     self.clearLists()
     self.R.new()
-    self.selected = None
+    self.select(None)
+    engine.monoselected = None
     if not silent:
       self.logEntry("Success", "Initialised new project.")
-    self.setCurrentFilename(None)
+    self.setCurrentFilename(None, silent=silent)
     self.update()
     
 
-  def saveProject(self): # TODO
+  def saveProject(self):
     '''Try to save from last filename, else prompt to save project'''
     if self.filename is None:
       self.saveasProject()
@@ -501,7 +942,7 @@ class MainApp(QMainWindow):
         self.setCurrentFilename(fn)
         self.logEntry("Success", "Saved project to %s"%shortfn(fn))
 
-  def openProject(self): # TODO
+  def openProject(self):
     '''Prompt to open project'''
     fd = QFileDialog()
     fd.setWindowTitle("Open")
@@ -535,8 +976,6 @@ class MainApp(QMainWindow):
         self.logEntry("Error", "Unable to restore previous session.")
       else:
         self.logEntry("Success", "Previous session restored.")
-    else:
-      self.newProject()
     self.update()
 
   def loadMeshes(self):
@@ -565,14 +1004,14 @@ class MainApp(QMainWindow):
     ext = os.path.splitext(fn)[1]
     if ext in [".bmp", ".png", ".jpg", ".jpeg"]:
       try:
-        self.add(self.R.loadTexture(fn))
+        self.add(Tex(fn))
       except:
         self.logEntry("Error", "Bad texture file: %s"%shortfn(fn))
       else:
         self.logEntry("Success", "Loaded texture from %s"%shortfn(fn))
     elif ext in [".obj"]:
       try:
-        self.add(self.R.loadMesh(fn))
+        self.add(Mesh(fn))
       except:
         self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
       else:
@@ -580,6 +1019,7 @@ class MainApp(QMainWindow):
 
   def exportImage(self):
     '''Prompt to export image in a size'''
+    self.select(None)
     M = Modal(self)
     M.setWindowTitle("Export Image")
     layout = QGridLayout()
@@ -662,14 +1102,15 @@ class MainApp(QMainWindow):
     layout.addWidget(poseBox, 0,1, 1,1)
     poseLayout = QFormLayout()
     poseBox.setLayout(poseLayout)
-    camx, camy, camz = self.UE.camera.pos
-    camrx, camry, camrz = [cyclamp(r*180/pi, (-180, 180)) for r in self.UE.camera.rot]
-    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camx)
-    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camy)
-    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=camz)
-    rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camrx)
-    ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camry)
-    rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180, value=camrz)
+    basepos, baserot = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basex, basey, basez = basepos
+    baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
+    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
+    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
+    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserx), suffix="°")
+    ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=basery), suffix="°")
+    rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserz), suffix="°")
     scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
     poseLayout.addRow("x", x)
     poseLayout.addRow("y", y)
@@ -707,6 +1148,7 @@ class MainApp(QMainWindow):
                     pos=pos, rot=rot, scale=scale.value(),
                     name=name.text())
       self.add(model)
+      self.select(model)
       dx = xv - lastx
       dy = yv - lasty
       dz = zv - lastz
@@ -727,12 +1169,83 @@ class MainApp(QMainWindow):
     mList.itemClicked.connect(testValid)
     tList.itemClicked.connect(testValid)
     testValid()
-    M.resize(500, 500)
     M.exec_() # show the modal
 
   def makeLights(self):
     '''Shows modal for making lights--NOT IMPLEMENTED'''
     pass
+
+  def makeGroups(self):
+    '''Shows modal for making groups'''
+    M = Modal(self)
+    M.setWindowTitle("Make Groups")
+    layout = QGridLayout()
+    M.setLayout(layout)
+
+    # POSE GROUP BOX
+    poseBox = QGroupBox("Pose")
+    layout.addWidget(poseBox, 0,0, 1,1)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    basepos, baserot = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basex, basey, basez = basepos
+    baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
+    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
+    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
+    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserx), suffix="°")
+    ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=basery), suffix="°")
+    rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserz), suffix="°")
+    scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Yaw", ry)
+    poseLayout.addRow("Pitch", rx)
+    poseLayout.addRow("Roll", rz)
+    poseLayout.addRow("scale", scale)
+
+    # CUSTOMISATION GROUP BOX
+    custBox = QGroupBox("Customization")
+    layout.addWidget(custBox, 1,0, 1,1)
+    custLayout = QFormLayout()
+    custBox.setLayout(custLayout)
+    name = QLineEdit(text="group0")
+    custLayout.addRow("Name", name)
+
+    lastx = x.value()
+    lasty = y.value()
+    lastz = z.value()
+
+    def tryMakeGroup(): # Attempt to construct Group from selected settings
+      nonlocal lastx, lasty, lastz # allows access to lastx, lasty, lastz declared in the outer function
+      xv, yv, zv = x.value(), y.value(), z.value()
+      pos = Point(xv, yv, zv)
+      rot = Rot(pi*rx.value()/180, pi*ry.value()/180, pi*rz.value()/180)
+      group = Directory(pos=pos, rot=rot, scale=scale.value(),
+                        name=name.text())
+      self.add(group)
+      dx = xv - lastx
+      dy = yv - lasty
+      dz = zv - lastz
+      x.setValue(xv+dx)
+      y.setValue(yv+dy)
+      z.setValue(zv+dz)
+      lastx, lasty, lastz = xv, yv, zv
+      self.logEntry("Success", "Made model.")
+
+    make = QPushButton(text="Make Group", icon=self.icons["Ok"])
+    make.clicked.connect(tryMakeGroup)
+    layout.addWidget(make, 2,0, 1,1)
+    M.exec_() # show the modal
+
+  def quickGroup(self):
+    cam = self.UE.camera
+    directory = Directory()
+    directory.pos, directory.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
+    directory.name = "My Group"
+    self.add(directory)
+    self.select(directory)
 
   def initEditPane(self):
     '''Initialises the edit pane'''
@@ -748,14 +1261,13 @@ class MainApp(QMainWindow):
     x = self.camEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.camEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     z = self.camEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    rx = self.camEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    ry = self.camEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    rz = self.camEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rx = self.camEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    ry = self.camEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    rz = self.camEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     fovy = self.camEdit_fovy = QDoubleSpinBox(minimum=0.05, maximum=179.95, value=60, singleStep=0.05)
-    zoom = self.camEdit_zoom = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
+    zoom = self.camEdit_zoom = QDoubleSpinBox(minimum=1.0, maximum=1000.0, value=1, singleStep=0.05)
     for setting in [x, y, z, rx, ry, rz, fovy, zoom]:
       setting.valueChanged.connect(self.camEditUpdate)
-
     L.addWidget(heading)
 
     poseBox = QGroupBox("Pose")
@@ -853,9 +1365,9 @@ class MainApp(QMainWindow):
     x = self.modelEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.modelEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     z = self.modelEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    rx = self.modelEdit_rx = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    ry = self.modelEdit_ry = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
-    rz = self.modelEdit_rz = QSlider(Qt.Horizontal, minimum=-180, maximum=180)
+    rx = self.modelEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    ry = self.modelEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    rz = self.modelEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     scale = self.modelEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
     visible = self.modelEdit_visible = QCheckBox(text="Visible", tristate=False)
     mesh = self.modelEdit_mesh = QLineEdit(readOnly=True)
@@ -905,6 +1417,108 @@ class MainApp(QMainWindow):
     W.setLayout(L)
     self.selEdit.addWidget(W)
 
+    #===DIRECTORY===
+    L = QVBoxLayout()
+
+    heading = QLabel("Group", font=self.fonts["heading"], alignment=Qt.AlignCenter)
+
+    name = self.dirEdit_name = QLineEdit()
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
+    x = self.dirEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.dirEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.dirEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = self.dirEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    ry = self.dirEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    rz = self.dirEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    scale = self.dirEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
+    visible = self.dirEdit_visible = QCheckBox(text="Visible", tristate=False)
+    
+    L.addWidget(heading)
+    
+    name.textChanged.connect(self.updateSelected)
+    L.addWidget(name)
+
+    poseBox = QGroupBox("Pose")
+    L.addWidget(poseBox)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Yaw", ry)
+    poseLayout.addRow("Pitch", rx)
+    poseLayout.addRow("Roll", rz)
+    poseLayout.addRow("Scale", scale)
+
+    sceneBox = QGroupBox("Scene")
+    L.addWidget(sceneBox)
+    sceneLayout = QFormLayout()
+    sceneBox.setLayout(sceneLayout)
+    sceneLayout.addWidget(visible)
+    
+    delete.clicked.connect(self.deleteSelected)
+    L.addWidget(delete)
+
+    for setting in [x,y,z, rx,ry,rz, scale]:
+      setting.valueChanged.connect(self.updateSelected)
+
+    visible.stateChanged.connect(self.updateSelected)
+
+    W = self.dirEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===LINK===
+    L = QVBoxLayout()
+
+    heading = QLabel("Symlink", font=self.fonts["heading"], alignment=Qt.AlignCenter)
+
+    name = self.linkEdit_name = QLineEdit()
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
+    x = self.linkEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.linkEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.linkEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    rx = self.linkEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    ry = self.linkEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    rz = self.linkEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
+    scale = self.linkEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
+    visible = self.linkEdit_visible = QCheckBox(text="Visible", tristate=False)
+    
+    L.addWidget(heading)
+    
+    name.textChanged.connect(self.updateSelected)
+    L.addWidget(name)
+
+    poseBox = QGroupBox("Pose")
+    L.addWidget(poseBox)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+    poseLayout.addRow("Yaw", ry)
+    poseLayout.addRow("Pitch", rx)
+    poseLayout.addRow("Roll", rz)
+    poseLayout.addRow("Scale", scale)
+
+    sceneBox = QGroupBox("Scene")
+    L.addWidget(sceneBox)
+    sceneLayout = QFormLayout()
+    sceneBox.setLayout(sceneLayout)
+    sceneLayout.addWidget(visible)
+    
+    delete.clicked.connect(self.deleteSelected)
+    L.addWidget(delete)
+
+    for setting in [x,y,z, rx,ry,rz, scale]:
+      setting.valueChanged.connect(self.updateSelected)
+
+    visible.stateChanged.connect(self.updateSelected)
+
+    W = self.linkEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
     #===UPDATE===
     self.updateSelEdit()
 
@@ -938,11 +1552,11 @@ class MainApp(QMainWindow):
     fovy = self.camEdit_fovy.value()
     zoom = self.camEdit_zoom.value()
     self.R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
-    self.gl.glDraw()
+    self.gl.update()
 
   def reinitSelected(self):
     '''Prompts user to reinitialise the selected object from different files/assets'''
-    S = self.selected
+    S = engine.monoselected
     name = S.name
     if type(S) is Mesh:
       ID = S.ID
@@ -953,7 +1567,7 @@ class MainApp(QMainWindow):
       if fd.exec_():
         fn = fd.selectedFiles()[0]
         try:
-          newMesh = self.R.loadMesh(fn)
+          newMesh = Mesh(fn)
           self.R.delete(S)
           S.__dict__ = newMesh.__dict__
           S.name = name
@@ -962,6 +1576,11 @@ class MainApp(QMainWindow):
           self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
         else:
           self.logEntry("Success", "Loaded mesh from %s"%shortfn(fn))
+        finally:
+          for i in range(self.modelList.count()):
+            model = self.modelList.item(i).obj
+            if model.mesh is S:
+              model.update_bbox()
 
     elif type(S) is Tex:
       fd = QFileDialog()
@@ -971,7 +1590,7 @@ class MainApp(QMainWindow):
       if fd.exec_():
         fn = fd.selectedFiles()[0]
         try:
-          newTex = self.R.loadTexture(fn)
+          newTex = Tex(fn)
           self.R.delete(S)
           S.__dict__ = newTex.__dict__
           S.name = name
@@ -998,9 +1617,9 @@ class MainApp(QMainWindow):
       assetLayout.addRow("Texture", tList)
 
       if not S.mesh.deleted:
-        mList.setCurrentRow(mList.ofind(S.mesh))
+        mList.setCurrentRow(mList.find(S.mesh))
       if not S.tex.deleted:
-        tList.setCurrentRow(tList.ofind(S.tex))
+        tList.setCurrentRow(tList.find(S.tex))
 
       def tryChangeModel():
         m = mList.selectedItems()
@@ -1009,6 +1628,7 @@ class MainApp(QMainWindow):
           return
         S.mesh = m[0].obj
         S.tex = t[0].obj
+        S.update_bbox()
         self.update()
       
       mList.itemClicked.connect(tryChangeModel)
@@ -1020,41 +1640,101 @@ class MainApp(QMainWindow):
 
   def deleteSelected(self):
     '''Deletes selected object'''
-    self.delete(self.selected)
+    self.delete(engine.monoselected)
     self.update()
 
   def delete(self, obj):
     '''Deletes object (Mesh, Tex, Model, or Light) from user environment, ui list, and file cache and deselects it'''
     # Remove from list
+    if isinstance(obj, Renderable):
+      self.rendTree.take(obj)
     listDict = {Mesh: self.meshList,
                 Tex: self.texList,
                 Model: self.modelList,
                 Light: self.lightList}
-    l = listDict[type(obj)]
-    for i in range(l.count()):
-      item = l.item(i)
-      if item.obj is obj:
-        l.takeItem(i)
-        break
+    if type(obj) in listDict:
+      l = listDict[type(obj)]
+      l.take(obj)
     self.R.delete(obj)
     # Deselect object
-    if self.selected is obj:
+    engine.selected.discard(obj)
+    if isinstance(engine.monoselected, Renderable):
+      engine.monoselected.update_bbox()
+    if engine.monoselected is obj:
       self.select(None)
+
+  def copySelected(self):
+    engine.clipboard = engine.monoselected
+
+  def shallowPaste(self, obj):
+    cam = self.UE.camera
+    if obj is not None:
+      try:
+        sCopy = copy.copy(engine.clipboard)
+        if isinstance(sCopy, Renderable):
+          if type(engine.monoselected) in [Model, Link]:
+            sCopy.pos, sCopy.rot = engine.monoselected.pos, engine.monoselected.rot
+          else:
+            sCopy.pos, sCopy.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
+        self.add(sCopy)
+      except TreeError as e:
+        self.logEntry("Error", "Symlink cycle: %s"%e)
+      else:
+        self.select(sCopy)
+
+  def deepPaste(self, obj):
+    cam = self.UE.camera
+    if obj is not None:
+      try:
+        dCopy = copy.deepcopy(engine.clipboard)
+        if isinstance(dCopy, Renderable):
+          if type(engine.monoselected) in [Model, Link]:
+            dCopy.pos, dCopy.rot = engine.monoselected.pos, engine.monoselected.rot
+          else:
+            dCopy.pos, dCopy.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
+        self.add(dCopy)
+      except TreeError as e:
+        self.logEntry("Error", "Symlink cycle: %s"%e)
+      else:
+        self.select(dCopy)
+
+  def shallowPasteClipboard(self):
+    self.shallowPaste(engine.clipboard)
+
+  def deepPasteClipboard(self):
+    self.deepPaste(engine.clipboard)
+
+  def shallowPasteSelected(self):
+    self.shallowPaste(engine.monoselected)
+
+  def deepPasteSelected(self):
+    self.deepPaste(engine.monoselected)
+
+  def move(self, rend, directory):
+    try:
+      rend.setParent(directory)
+    except TreeError as e:
+      self.logEntry("Error", "Symlink cycle: %s"%e)
+    else:
+      self.rendTree.move(rend, directory)
+
+  def cutSelected(self):
+    self.copySelected()
+    self.deleteSelected()
 
   def updateSelected(self):
     '''Updates selected object from displayed settings'''
-    S = self.selected
-    if type(self.selected) is Tex:
+    S = engine.monoselected
+    if type(S) is Tex:
       S.name = self.texEdit_name.text()
       self.texList.update()
       
-    elif type(self.selected) is Mesh:
+    elif type(S) is Mesh:
       S.name = self.meshEdit_name.text()
       S.cullbackface = self.meshEdit_cullbackface.isChecked()
-      self.meshEdit_cullbackface.setTristate(False)
       self.meshList.update()
       
-    elif type(self.selected) is Model:
+    elif type(S) is Model:
       S.name = self.modelEdit_name.text()
       S.pos = Point(self.modelEdit_x.value(),
                     self.modelEdit_y.value(),
@@ -1064,16 +1744,43 @@ class MainApp(QMainWindow):
                   pi*self.modelEdit_rz.value()/180)
       S.scale = self.modelEdit_scale.value()
       S.visible = self.modelEdit_visible.isChecked()
-      self.modelEdit_visible.setTristate(False)
       self.modelList.update()
+      self.rendTree.update()
+
+    elif type(S) is Directory:
+      S.name = self.dirEdit_name.text()
+      S.pos = Point(self.dirEdit_x.value(),
+                    self.dirEdit_y.value(),
+                    self.dirEdit_z.value())
+      S.rot = Rot(pi*self.dirEdit_rx.value()/180,
+                  pi*self.dirEdit_ry.value()/180,
+                  pi*self.dirEdit_rz.value()/180)
+      S.scale = self.dirEdit_scale.value()
+      S.visible = self.dirEdit_visible.isChecked()
+      self.rendTree.update()
+
+    elif type(S) is Link:
+      S.name = self.linkEdit_name.text()
+      S.pos = Point(self.linkEdit_x.value(),
+                    self.linkEdit_y.value(),
+                    self.linkEdit_z.value())
+      S.rot = Rot(pi*self.linkEdit_rx.value()/180,
+                  pi*self.linkEdit_ry.value()/180,
+                  pi*self.linkEdit_rz.value()/180)
+      S.scale = self.linkEdit_scale.value()
+      S.visible = self.linkEdit_visible.isChecked()
+      self.rendTree.update()
       
-    self.gl.glDraw()
+    self.gl.update()
 
   def switchSelEdit(self, objType):
     '''Updates the stacked widget in the "Selected" tab of the edit pane'''
     widgetDict = {Mesh: self.meshEdit,
                   Tex: self.texEdit,
-                  Model: self.modelEdit}
+                  Model: self.modelEdit,
+                  Directory: self.dirEdit,
+                  Link: self.linkEdit
+                  }
     if objType in widgetDict:
       self.selEdit.setCurrentWidget(widgetDict[objType])
     else:
@@ -1081,7 +1788,7 @@ class MainApp(QMainWindow):
 
   def updateSelEdit(self):
     '''Switch to relevent layout and put in correct settings to display'''
-    S = self.selected
+    S = engine.monoselected
     self.switchSelEdit(type(S))
     if type(S) is Tex:
       name = S.name
@@ -1113,8 +1820,7 @@ class MainApp(QMainWindow):
         
       for checkbox, state in [(self.meshEdit_cullbackface, cullbackface)]:
         checkbox.blockSignals(True)
-        checkbox.setCheckState(state)
-        checkbox.setTristate(False)
+        checkbox.setCheckState(state*2)
         checkbox.blockSignals(False)
 
       self.meshEdit.update()
@@ -1153,26 +1859,144 @@ class MainApp(QMainWindow):
       
       for checkbox, state in [(self.modelEdit_visible, visible)]:
         checkbox.blockSignals(True)
-        checkbox.setCheckState(state)
-        checkbox.setTristate(False)
+        checkbox.setCheckState(state*2)
         checkbox.blockSignals(False)
+
+      self.modelEdit.update()
+
+    elif type(S) is Directory:
+      name = S.name
+      x, y, z = S.pos
+      rx, ry, rz = S.rot
+      rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
+      scale = S.scale
+      visible = S.visible
+      
+      for setting, text in [(self.dirEdit_name, name)]:
+        setting.blockSignals(True)
+        setting.setText(text)
+        setting.blockSignals(False)
+      
+      for setting, var in [(self.dirEdit_x, x),
+                           (self.dirEdit_y, y),
+                           (self.dirEdit_z, z),
+                           (self.dirEdit_rx, rx),
+                           (self.dirEdit_ry, ry),
+                           (self.dirEdit_rz, rz),
+                           (self.dirEdit_scale, scale)]:
+        setting.blockSignals(True)
+        setting.setValue(var)
+        setting.blockSignals(False)
+      
+      for checkbox, state in [(self.dirEdit_visible, visible)]:
+        checkbox.blockSignals(True)
+        checkbox.setCheckState(state*2)
+        checkbox.blockSignals(False)
+
+      self.dirEdit.update()
+
+    elif type(S) is Link:
+      name = S.name
+      x, y, z = S.pos
+      rx, ry, rz = S.rot
+      rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
+      scale = S.scale
+      visible = S.visible
+      
+      for setting, text in [(self.linkEdit_name, name)]:
+        setting.blockSignals(True)
+        setting.setText(text)
+        setting.blockSignals(False)
+      
+      for setting, var in [(self.linkEdit_x, x),
+                           (self.linkEdit_y, y),
+                           (self.linkEdit_z, z),
+                           (self.linkEdit_rx, rx),
+                           (self.linkEdit_ry, ry),
+                           (self.linkEdit_rz, rz),
+                           (self.linkEdit_scale, scale)]:
+        setting.blockSignals(True)
+        setting.setValue(var)
+        setting.blockSignals(False)
+      
+      for checkbox, state in [(self.linkEdit_visible, visible)]:
+        checkbox.blockSignals(True)
+        checkbox.setCheckState(state*2)
+        checkbox.blockSignals(False)
+
+      self.linkEdit.update()
         
     self.selEdit.update()
     
   def select(self, obj):
     '''Selects an object for editing'''
-    self.selected = obj
+    engine.selected.clear()
+    if obj is not None:
+      engine.selected.add(obj)
     if isinstance(obj, Renderable):
-      self.R.lookAt(obj)
+      obj.update_bbox()
+    engine.monoselected = obj
     self.edit.setCurrentWidget(self.selScrollArea)
     self.updateSelEdit()
+    self.gl.sel_dv = None
+    self.gl.sel_dr = None
+    self.gl.update()
+    self.rendTree.select(obj)
+
+  def selectParent(self):
+    if isinstance(engine.monoselected, Renderable):
+      self.select(engine.monoselected.parent)
+
+  def selectFirstChild(self):
+    if engine.monoselected is None and self.rendTree.topLevelItemCount():
+      self.select(self.rendTree.topLevelItem(0).obj)
+    elif isinstance(engine.monoselected, Directory):
+      node = self.rendTree.objNodeDict[engine.monoselected]
+      if node.childCount():
+        self.select(node.child(0).obj)
+
+  def selectLastChild(self):
+    if engine.monoselected is None and self.rendTree.topLevelItemCount():
+      self.select(self.rendTree.topLevelItem(self.rendTree.topLevelItemCount()-1).obj)
+    elif isinstance(engine.monoselected, Directory):
+      node = self.rendTree.objNodeDict[engine.monoselected]
+      if node.childCount():
+        self.select(node.child(node.childCount()-1).obj)
+
+  def selectPrevSibling(self):
+    if engine.monoselected is None:
+      self.selectLastChild()
+    elif isinstance(engine.monoselected, Renderable):
+      parentNode = self.rendTree.objNodeDict[engine.monoselected].parent()
+      if parentNode is None:
+        prevIndex = self.rendTree.find(engine.monoselected) - 1
+        if prevIndex in range(self.rendTree.topLevelItemCount()):
+          self.select(self.rendTree.topLevelItem(prevIndex).obj)
+      else:
+        prevIndex = parentNode.find(engine.monoselected) - 1
+        if prevIndex in range(parentNode.childCount()):
+          self.select(parentNode.child(prevIndex).obj)
+
+  def selectNextSibling(self):
+    if engine.monoselected is None:
+      self.selectFirstChild()
+    elif isinstance(engine.monoselected, Renderable):
+      parentNode = self.rendTree.objNodeDict[engine.monoselected].parent()
+      if parentNode is None:
+        nextIndex = self.rendTree.find(engine.monoselected) + 1
+        if nextIndex in range(self.rendTree.topLevelItemCount()):
+          self.select(self.rendTree.topLevelItem(nextIndex).obj)
+      else:
+        nextIndex = parentNode.find(engine.monoselected) + 1
+        if nextIndex in range(parentNode.childCount()):
+          self.select(parentNode.child(nextIndex).obj)
 
   def update(self):
     '''Overload: update to display correct features'''
     self.updateMenu()
     self.updateCamEdit()
     self.updateSelEdit()
-    self.gl.glDraw()
+    self.gl.update()
     super().update()
 
   def closeEvent(self, event):
@@ -1191,7 +2015,6 @@ class MainApp(QMainWindow):
     paths = [urlObj.adjusted(QUrl.RemoveScheme).url()[1:] for urlObj in mimeData.urls()]
     if len(paths) == 1 and os.path.splitext(paths[0])[1] == ".3dproj":
       self.load(paths[0])
-
     else:
       for path in paths:
         self.loadAssetFile(path)

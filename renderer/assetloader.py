@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 '''
-sceneelement.py
+assetloader.py
 original source: https://github.com/edward344/PyOpenGL-sample/blob/master/graphics.py
 changes:
     - texture coordinates specific to each face are taken into account
@@ -11,7 +11,8 @@ changes:
 
 thanks edward344!
 '''
-from init import *
+from all_modules import *
+from appdata import datapath
 
 def id_gen(start=1):
     '''Generator that yields consecutive numbers'''
@@ -26,9 +27,12 @@ def gentexcoord(f):
     Y = (cos(f*tau)+1)/2
     return (X, Y)
 
+def standardizeImage(filename):
+    return Image.open(filename).resize((1024, 1024)).convert("RGBA")
+
 def load_texture(filename):
     '''Returns the id for the texture'''
-    textureSurface = Image.open(filename).convert("RGBA")
+    textureSurface = standardizeImage(filename)
     textureData = textureSurface.tobytes("raw")
     IM = Image.frombytes("RGBA", textureSurface.size, textureData)
     width, height = textureSurface.size
@@ -72,10 +76,8 @@ class Asset:
 class Tex(Asset):
     IDs = id_gen(1)
     texDict = dict()
-    def __init__(self, filename, name=None, ID=0):
-        if ID == 0:
-            ID = next(Tex.IDs)
-        self.ID = ID
+    def __init__(self, filename, name=None):
+        self.ID = next(Tex.IDs)
         self._clear()
         self.filename = filename
         if name is None:
@@ -94,6 +96,8 @@ class Tex(Asset):
         self.texID = load_texture(self.filename)
         self.thumbnail = load_thumbnail(self.filename) # 100x100 res
         self.thumbnailQt = im2qim(self.thumbnail)
+        self.tmpFilename = datapath("save/assets/textures/%d.png"%self.ID)
+        standardizeImage(self.filename).save(self.tmpFilename, "PNG")
 
     def delete(self):
         self.deleted = True
@@ -103,13 +107,17 @@ class Tex(Asset):
         self.name = None
         del Tex.texDict[self.ID]
 
+    def __copy__(self):
+        return Tex(self.tmpFilename, name=self.name)
+
+    def __deepcopy__(self, memo):
+        return copy.copy(self)
+
 class Mesh(Asset):
     IDs = id_gen(1)
     meshDict = dict()
-    def __init__(self, filename, name=None, cullbackface=True, ID=0):
-        if ID == 0:
-            ID = next(Mesh.IDs)
-        self.ID = ID
+    def __init__(self, filename, name=None, cullbackface=True):
+        self.ID = next(Mesh.IDs)
         self._clear()
         self.filename = filename
         self.cullbackface = cullbackface
@@ -121,13 +129,16 @@ class Mesh(Asset):
         except Exception as e:
             raise IOError("Bad mesh file. More info:\n"+str(e))
         else:
+            self.tmpFilename = datapath("save/assets/meshes/%d.obj"%self.ID)
+            shutil.copyfile(self.filename, self.tmpFilename)
             Mesh.meshDict[self.ID] = self
 
     def _clear(self):
+        self.deleted = False
+        
         # cullbackface
         #   OFF: show both front and back of each polygon
         #   ON:  show only front face of each polygon
-        self.deleted = False
         self.cullbackface = True # modify this as you please
         
         self.vertices = [(0.0, 0.0, 0.0)] # 1-indexing
@@ -143,7 +154,11 @@ class Mesh(Asset):
         self.vbo_texcoords = []
         self.vbo_normals = []
         self.vbo_tri_indices = []
+        self.vbo_line_indices = []
         self.vbo_buffers = []
+
+        self.min_xyz = [None, None, None]
+        self.max_xyz = [None, None, None]
 
     def _load(self):
         '''Load from .obj file'''
@@ -157,6 +172,7 @@ class Mesh(Asset):
             if command == "v":
                 vertex = tuple(float(word) for word in words[1:4])
                 self.vertices.append(vertex)
+                self._update_bbox(vertex)
 
             elif command == "vt":
                 texcoord = tuple(float(word) for word in words[1:3])
@@ -196,6 +212,14 @@ class Mesh(Asset):
         self._gen_vbo_arrays()
         self._gen_vbo_buffers()
 
+    def _update_bbox(self, v):
+        for i, (minn, maxn, n) in enumerate(zip(self.min_xyz, self.max_xyz, v)):
+            if minn is None or n < minn:
+                self.min_xyz[i] = n
+            if maxn is None or n > maxn:
+                self.max_xyz[i] = n
+        
+
     def _gen_normals(self):
         '''Generate missing normal vectors'''
         for face in chain(self.tri_faces, self.quad_faces, self.poly_faces):
@@ -230,12 +254,13 @@ class Mesh(Asset):
             Ai = di
             for Bi, Ci in zip(range(di+1,di+N_v-1), range(di+2,di+N_v)):
                 self.vbo_tri_indices.extend((Ai, Bi, Ci))
+                self.vbo_line_indices.extend((Ai, Bi, Bi, Ci, Ci, Ai))
             self.vbo_bufferlen += N_v
 
     def _gen_vbo_buffers(self):
         '''Make buffers from VBO arrays'''
         # vertices, texcoords, normals, indices for tris
-        buffers = glGenBuffers(4)
+        buffers = glGenBuffers(5)
 
         # vertices [x, y, z, x, y, z, ...]
         glBindBuffer(GL_ARRAY_BUFFER, buffers[0])
@@ -265,6 +290,13 @@ class Mesh(Asset):
                      (ctypes.c_uint*len(self.vbo_tri_indices))(*self.vbo_tri_indices),
                      GL_STATIC_DRAW)
 
+        # wireframe lines (has redundancies, but gets the job done)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, buffers[4])
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER,
+                     len(self.vbo_line_indices)*4,
+                     (ctypes.c_uint*len(self.vbo_line_indices))(*self.vbo_line_indices),
+                     GL_STATIC_DRAW)
+
         self.vbo_buffers = buffers
 
     def __repr__(self):
@@ -289,6 +321,8 @@ class Mesh(Asset):
             
     def render(self, tex): # GPU-powered rendering!
         '''Render mesh into buffers with texture from textureID.'''
+        glEnable(GL_TEXTURE_2D)
+        glEnable(GL_FOG)
         if self.cullbackface:
             glEnable(GL_CULL_FACE)
         glBindTexture(GL_TEXTURE_2D, tex.texID)
@@ -313,7 +347,7 @@ class Mesh(Asset):
 ##            glEnd()
 
         #====VBO (STANDARD, GPU PIPELINE)====
-        V, TC, N, TRI_I = self.vbo_buffers
+        V, TC, N, TRI_I, _ = self.vbo_buffers
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_TEXTURE_COORD_ARRAY)
         glEnableClientState(GL_NORMAL_ARRAY)
@@ -334,7 +368,18 @@ class Mesh(Asset):
         glDisableClientState(GL_TEXTURE_COORD_ARRAY)
         glDisableClientState(GL_VERTEX_ARRAY)
 
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_FOG)
         glDisable(GL_CULL_FACE)
+
+    def render_wireframe(self):
+        V, _, _, _, LINE_I = self.vbo_buffers
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, V)
+        glVertexPointer(3, GL_FLOAT, 0, None)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, LINE_I)
+        glDrawElements(GL_LINES, len(self.vbo_line_indices), GL_UNSIGNED_INT, None)
+        glDisableClientState(GL_VERTEX_ARRAY)
 
     def delete(self):
         '''Unload self, turning into a cube'''
@@ -344,3 +389,9 @@ class Mesh(Asset):
         self._load()
         self.deleted = True
         del Mesh.meshDict[self.ID]
+
+    def __copy__(self):
+        return Mesh(self.tmpFilename, cullbackface=self.cullbackface, name=self.name)
+
+    def __deepcopy__(self, memo):
+        return copy.copy(self)

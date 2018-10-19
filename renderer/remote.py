@@ -5,7 +5,7 @@ remote.py
 All user-friendly functions to modify a UserEnv go here.
 
 '''
-from init import *
+from all_modules import *
 
 from rotpoint import Rot, Point
 from assetloader import Asset, Mesh, Tex
@@ -25,28 +25,24 @@ class Remote:
     self.clearUserEnv()
 
   def load(self, fn):
-    '''Load project--NOT IMPLEMENTED'''
+    '''Load project'''
     saver.load(fn)
 
   def save(self, fn):
-    '''Save project--NOT IMPLEMENTED'''
+    '''Save project'''
     saver.save(fn)
 
-  def loadMesh(self, fn, *args, **kwargs):
-    '''Load a mesh into a Mesh object and an appdata file'''
-    new_mesh = Mesh(fn, *args, **kwargs)
-    try:
-      dataclone(fn, "save/assets/meshes/%d.obj"%new_mesh.ID)
-    except:
-      pass
-    return new_mesh
-
-  def loadTexture(self, fn, *args, **kwargs):
-    '''Load a texture into a Tex object and an appdata file'''
-    new_tex = Tex(fn, *args, **kwargs)
-    im = Image.open(fn)
-    im.save(datapath("save/assets/textures/%d.png"%new_tex.ID), "PNG")
-    return new_tex
+##  def loadMesh(self, fn, *args, **kwargs):
+##    '''Load a mesh into a Mesh object and an appdata file'''
+##    new_mesh = Mesh(fn, *args, **kwargs)
+##    return new_mesh
+##
+##  def loadTexture(self, fn, *args, **kwargs):
+##    '''Load a texture into a Tex object and an appdata file'''
+##    new_tex = Tex(fn, *args, **kwargs)
+##    im = Image.open(fn).resize((1024, 1024))
+##    im.save()
+##    return new_tex
 
   def addAsset(self, asset):
     '''Add a Texture object (Mesh, Tex) into the userenv'''
@@ -67,21 +63,26 @@ class Remote:
     asset.delete()
     self.userenv.assets.discard(asset)
 
-  def addRend(self, rend):
+  def addRend(self, rend, directory=None):
     '''Adds rend into userenv's scene'''
-    has_rend = rend in self.userenv.scene.rends
-    self.userenv.scene.add(rend)
+    if directory is None:
+      has_rend = rend in self.userenv.scene.rends
+      self.userenv.scene.add(rend)
+    else:
+      has_rend = rend in directory.rends
+      directory.add(rend)
     return has_rend
 
   def delRend(self, rend):
     '''Deletes rend from userenv's scene'''
+    rend.setParent(None)
     self.userenv.scene.discard(rend)
 
-  def add(self, obj):
+  def add(self, obj, directory=None):
     if isinstance(obj, Asset):
       return self.addAsset(obj)
     elif isinstance(obj, Renderable):
-      return self.addRend(obj)
+      return self.addRend(obj, directory)
 
   def delete(self, obj):
     if isinstance(obj, Asset):
@@ -92,7 +93,7 @@ class Remote:
   def configModel(self, model, mesh=None, tex=None, pos=None, rot=None, scale=None, name=None):
     '''Configures Model object's assets, position, rotation, scale, and name'''
     assert model in self.userenv.models
-    model.mesh = mmesh if mesh is not None else model.mesh
+    model.mesh = mesh if mesh is not None else model.mesh
     model.tex = tex if tex is not None else model.tex
     model.pos = pos if pos is not None else model.pos
     model.rot = rot if rot is not None else model.rot
@@ -111,10 +112,31 @@ class Remote:
     '''Adds delta rotation to camera's rotation'''
     self.userenv.camera.rot += (drx, dry, drz)
 
-  def lookAt(self, rend):
+  def dragPan(self, dX, dY):
+    self.userenv.camera.rot = Rot(dY/300, -dX/300, 0)*self.userenv.camera.rot
+
+  def changeRendRot(self, rend, drx, dry, drz):
+    rend.rot += (drx, dry, drz)
+
+  def lookAt(self, obj):
     '''Makes camera look at object with 0 roll'''
-    dpos = rend.pos - self.userenv.camera.pos
+    if isinstance(obj, Renderable):
+      dpos = obj.getTruePos() - self.userenv.camera.pos
+    elif isinstance(obj, Point):
+      dpos = obj - self.userenv.camera.pos
     self.userenv.camera.rot = Rot.from_delta3(dpos)
+
+  def moveCameraTo(self, obj):
+    if isinstance(obj, Renderable):
+      newpos, newrot = obj.getTruePos(), obj.getTrueRot()
+    else:
+      newpos, newRot = obj
+    self.userenv.camera.pos, self.userenv.camera.rot = newpos, newrot
+
+  def rectifyCamera(self):
+    '''Stands camera upright'''
+    rx, ry, rz = self.userenv.camera.rot
+    self.userenv.camera.rot = Rot(rx, ry, 0)
 
   def setFocus(self, rend):
     '''Sets focus on a renderable'''
@@ -125,20 +147,22 @@ class Remote:
     '''Moves camera by deltas'''
     self.userenv.camera.pos += (dx, dy, dz)
 
+  def moveRend(self, rend, dx, dy, dz):
+    rend.pos += (rend.getDirBasePos((dx, dy, dz))-rend.getDirBasePos((0, 0, 0)))
+
+  def moveRendTo(self, rend, x, y, z):
+    rend.pos = rend.getDirBasePos((x, y, z))
+
   def resizeViewport(self, X, Y):
     '''Resizes the OpenGL viewport to (X, Y)'''
     glViewport(0,0, X,Y)
 
   def renderScene(self, aspect=1.33):
     '''Renders the scene into the OpenGL view buffer'''
-    try:
-      self.userenv.scene.render(self.userenv.camera, aspect=aspect)
-    except Exception as e:
-      print(e)
+    self.userenv.scene.render(self.userenv.camera, aspect=aspect)
 
-  def getContextRes(self):
-    '''Returns resolution of context'''
-    return self.context.getres()
+##  def renderOverlay(self, aspect=1.33):
+##    self.userenv.scene.renderOverlay(self.userenv.camera, aspect=aspect)
 
   def clearUserEnv(self):
     '''Clears user environment to a clean slate'''

@@ -6,8 +6,11 @@ Entry point for main graphical application.
 Made solely by Marcus Koh
 '''
 
-from init import *
-from gui import MainApp
+from all_modules import *
+from mainapp import MainApp
+
+def except_hook(cls, exception, traceback):
+    sys.__excepthook__(cls, exception, traceback)
 
 def demo(app):
   # for demo, add some models
@@ -39,13 +42,13 @@ def demo(app):
 
 def main(*args, **kwargs):
   '''Runs the main graphical application.'''
+  sys.except_hook = except_hook
   window = QApplication(sys.argv)
+  QCoreApplication.setApplicationName(APPNAME)
   app = MainApp()
   app.restoreProject()
   sys.exit(window.exec_())
+##  QCoreApplication.exit(window.exec_())
 
 if __name__ == "__main__": # MAIN ENTRY POINT
-  try:
-    main()
-  except Exception as e:
-    print("ERROR:", e)
+  main()

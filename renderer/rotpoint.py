@@ -4,7 +4,7 @@ rotpoint.py
 describes positioning and rotation of cameras and models
 '''
 
-from init import *
+from all_modules import *
 
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
@@ -121,9 +121,22 @@ class Rot(Tuple3f):
     rx = atan2(dy, hypot(dx, dz))
     return Rot(rx, ry, rz)
 
+  def from_transmat(T):
+    A = np.array(T)
+    sy = hypot(A[0,1], A[1,1])
+    ry = atan2(-A[2,0], A[2,2])
+    rx = atan2(-A[2,1], sy)
+    rz = atan2(-A[0,1], A[1,1])
+    return Rot(rx, ry, rz)
+
   def __neg__(self):
     rx, ry, rz = self
     return Rot(-rx, -ry, -rz)
+
+  def __mul__(self, a):
+    if type(a) is Rot:
+      return Rot.from_transmat(self.get_transmat()*a.get_transmat())
+    return a.__rmul__(self)
 
   def get_transmat(self, invert=False):
     '''Get transformation matrix of Rot object'''
@@ -156,5 +169,4 @@ class Rot(Tuple3f):
 
 
 if __name__ == "__main__":
-  for i in range(100):
-    print(Rot(pi/3, pi*(i/100), pi/3).get_upward_vector())
+  pass
