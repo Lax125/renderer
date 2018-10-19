@@ -499,13 +499,13 @@ class ObjTree(QTreeWidget): # TODO
     selItems = self.selectedItems()
     if selItems:
       self.parent.select(selItems[0].obj)
+      if isinstance(selItems[0].obj, Renderable):
+        self.parent.R.lookAt(selItems[0].obj)
 
   def onItemDoubleClicked(self, item):
-    if isinstance(item.obj, Renderable):
-      if keyModFlags() & Qt.ShiftModifier:
-        self.parent.R.moveCameraTo(item.obj)
-      else:
-        self.parent.R.lookAt(item.obj)
+    if isinstance(item.obj, Link):
+      self.parent.select(item.obj.directory)
+      self.parent.R.lookAt(item.obj.directory)
 
   def keyPressEvent(self, event):
     cam = self.parent.UE.camera
@@ -546,9 +546,9 @@ class Modal(QDialog):
     QDialog.__init__(self, *args, **kwargs)
     self.setModal(True)
 
-def YNPrompt(parent, title="YN", text="Do action?"):
-  reply = QMessageBox.question(parent, title, text,
-                               QMessageBox.Yes|QMessageBox.No, QMessageBox.Yes)
+def YNPrompt(parent, title="YN", text="Do action?", factory=QMessageBox.question):
+  reply = factory(parent, title, text,
+                  QMessageBox.Yes|QMessageBox.No, QMessageBox.Yes)
   return reply == QMessageBox.Yes
 
 class ResizableTabWidget(QTabWidget):
@@ -690,15 +690,16 @@ class MainApp(QMainWindow):
     
     bar = self.menuBar()
     file = bar.addMenu("&File")
-    self.fileMenu_new = QAction(self.icons["New"], "&New project")
-    self.fileMenu_open = QAction(self.icons["Open"], "&Open project")
-    self.fileMenu_save = QAction(self.icons["Save"], "&Save project")
-    self.fileMenu_saveas = QAction(self.icons["Save"], "Save project &as...")
-    self.fileMenu_exportimage = QAction(self.icons["Image File"], "&Export image")
-    self.fileMenu_loadmeshes = QAction(self.icons["Mesh"], "Load &meshes")
-    self.fileMenu_loadtextures = QAction(self.icons["Texture"], "Load &textures")
+    self.fileMenu_new = QAction(self.icons["New"], "&New")
+    self.fileMenu_open = QAction(self.icons["Open"], "&Open...")
+    self.fileMenu_save = QAction(self.icons["Save"], "&Save")
+    self.fileMenu_saveas = QAction(self.icons["Save"], "Save &as...")
+    self.fileMenu_exportimage = QAction(self.icons["Image File"], "&Export Image")
+    self.fileMenu_loadmeshes = QAction(self.icons["Mesh"], "Load &Meshes")
+    self.fileMenu_loadtextures = QAction(self.icons["Texture"], "Load &Textures")
     file.addAction(self.fileMenu_new)
     file.addAction(self.fileMenu_open)
+    file.addSeparator()
     file.addAction(self.fileMenu_save)
     file.addAction(self.fileMenu_saveas)
     file.addSeparator()
@@ -707,10 +708,10 @@ class MainApp(QMainWindow):
     file.addSeparator()
     file.addAction(self.fileMenu_exportimage)
     scene = bar.addMenu("&Scene")
-    self.sceneMenu_makemodels = QAction(self.icons["Model"], "Make &models")
-    self.sceneMenu_makelights = QAction(self.icons["Light"], "Make &lights")
-    self.sceneMenu_makegroups = QAction(self.icons["Object Group"], "Make &groups")
-    self.sceneMenu_quickgroup = QAction(self.icons["Object Group"], "Make group &here")
+    self.sceneMenu_makemodels = QAction(self.icons["Model"], "Make &Models")
+    self.sceneMenu_makelights = QAction(self.icons["Light"], "Make &Lights")
+    self.sceneMenu_makegroups = QAction(self.icons["Object Group"], "Make &Groups")
+    self.sceneMenu_quickgroup = QAction(self.icons["Object Group"], "Make Group &Here")
     scene.addAction(self.sceneMenu_makemodels)
     scene.addAction(self.sceneMenu_makelights)
     scene.addAction(self.sceneMenu_makegroups)
@@ -901,6 +902,8 @@ class MainApp(QMainWindow):
 
   def newProject(self, silent=False):
     '''Clear user environment and QListWidgets'''
+    if not silent and not YNPrompt(self, "New", "Make new project? All unsaved changed will be lost.", factory=QMessageBox.warning):
+      return
     self.clearLists()
     self.R.new()
     self.select(None)
@@ -1670,12 +1673,9 @@ class MainApp(QMainWindow):
     cam = self.UE.camera
     if obj is not None:
       try:
-        sCopy = copy.copy(engine.clipboard)
+        sCopy = copy.copy(obj)
         if isinstance(sCopy, Renderable):
-          if type(engine.monoselected) in [Model, Link]:
-            sCopy.pos, sCopy.rot = engine.monoselected.pos, engine.monoselected.rot
-          else:
-            sCopy.pos, sCopy.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
+          sCopy.pos, sCopy.rot = obj.pos, obj.rot
         self.add(sCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
@@ -1686,12 +1686,9 @@ class MainApp(QMainWindow):
     cam = self.UE.camera
     if obj is not None:
       try:
-        dCopy = copy.deepcopy(engine.clipboard)
+        dCopy = copy.deepcopy(obj)
         if isinstance(dCopy, Renderable):
-          if type(engine.monoselected) in [Model, Link]:
-            dCopy.pos, dCopy.rot = engine.monoselected.pos, engine.monoselected.rot
-          else:
-            dCopy.pos, dCopy.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
+          dCopy.pos, dCopy.rot = obj.pos, obj.rot
         self.add(dCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
@@ -1705,10 +1702,14 @@ class MainApp(QMainWindow):
     self.deepPaste(engine.clipboard)
 
   def shallowPasteSelected(self):
-    self.shallowPaste(engine.monoselected)
+    sel = engine.monoselected
+    self.selectParent()
+    self.shallowPaste(sel)
 
   def deepPasteSelected(self):
-    self.deepPaste(engine.monoselected)
+    sel = engine.monoselected
+    self.selectParent()
+    self.deepPaste(sel)
 
   def move(self, rend, directory):
     try:
@@ -2000,6 +2001,11 @@ class MainApp(QMainWindow):
     super().update()
 
   def closeEvent(self, event):
+    if YNPrompt(self, "Close", "Exit %s? Unsaved progress may still be accessed next session."%APPNAME, factory=QMessageBox.warning):
+      event.accept()
+    else:
+      event.ignore()
+      return
     self.envPane.hide()
     self.editPane.hide()
     self.logPane.hide()
