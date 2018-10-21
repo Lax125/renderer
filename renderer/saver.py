@@ -4,7 +4,7 @@ from all_modules import *
 from appdata import *
 from rotpoint import Rot, Point
 from engine import Model, Light, Directory, Link
-from assetloader import Mesh, Tex, id_gen
+from asset import Mesh, Tex, id_gen
 
 def lazyReadlines(f):
   l = f.readline()

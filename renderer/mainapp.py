@@ -10,7 +10,7 @@ Makes the graphical application and runs the main systems
 from all_modules import *
 
 from rotpoint import Rot, Point
-from assetloader import id_gen, Asset, Mesh, Tex
+from asset import id_gen, Asset, Mesh, Tex
 from engine import Renderable, Model, Light, Directory, Link, initEngine, TreeError
 import engine
 from userenv import UserEnv
@@ -406,27 +406,27 @@ class ObjNode(QTreeWidgetItem):
     for i in range(self.childCount()):
       self.child(i).update()
 
-class ObjTree(QTreeWidget): # TODO
+class ObjTree(QTreeWidget):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.setSelectionMode(QAbstractItemView.SingleSelection)
     self.setDragEnabled(True)
     self.viewport().setAcceptDrops(True)
-    self.setDropIndicatorShown(True)
+    self.setDropIndicatorShown(False)
     self.setDragDropMode(QAbstractItemView.InternalMove)
     self.parent = self.parentWidget()
     self.objNodeDict = dict() # asset/renderable --> node
     self.groupNums = id_gen()
     self.itemChanged.connect(self.onItemChanged)
     self.itemSelectionChanged.connect(self.onItemSelectionChanged)
+    self.itemClicked.connect(self.onItemClicked)
     self.itemDoubleClicked.connect(self.onItemDoubleClicked)
     self.setSortingEnabled(True)
+    self.refactoring = False
     
   def add(self, obj, directory=None):
     '''Adds ObjNode to a directory'''
-    node = ObjNode(obj)
-    self.objNodeDict[obj] = node
-    self.move(obj, directory)
+    node = self.new(obj, directory)
     if isinstance(obj, Directory):
       for child in obj.rends:
         self.add(child, directory=obj)
@@ -446,16 +446,29 @@ class ObjTree(QTreeWidget): # TODO
       node = self.takeTopLevelItem(self.find(obj))
     else:
       node = parent.take(obj)
-    del self.objNodeDict[obj]
     return node
 
-  def move(self, obj, directory):
-    '''Moves obj to directory'''
-    node = self.objNodeDict[obj]
+  def delete(self, obj):
+    self.take(obj)
+    del self.objNodeDict[obj]
+
+  def new(self, obj, directory):
+    node = self.objNodeDict[obj] = ObjNode(obj)
     if directory is None:
       self.addTopLevelItem(node)
     else:
       self.objNodeDict[directory].addChild(node)
+    self.update()
+    return node
+
+  def move(self, obj, directory):
+    '''Moves obj to directory'''
+    node = self.take(obj)
+    if directory is None:
+      self.addTopLevelItem(node)
+    else:
+      self.objNodeDict[directory].addChild(node)
+    self.update()
     return node
 
   def update(self):
@@ -488,12 +501,10 @@ class ObjTree(QTreeWidget): # TODO
       return parentItem.obj
     return None
 
-##  def dropEvent(self, event):
-##    pass
-
   def onItemChanged(self, item):
     if isinstance(item.obj, Renderable):
       item.obj.visible = item.checkState(2)==2
+      self.parent.update()
 
   def onItemSelectionChanged(self):
     selItems = self.selectedItems()
@@ -501,6 +512,10 @@ class ObjTree(QTreeWidget): # TODO
       self.parent.select(selItems[0].obj)
       if isinstance(selItems[0].obj, Renderable):
         self.parent.R.lookAt(selItems[0].obj)
+  
+  def onItemClicked(self, item):
+    if self.refactoring:
+      self.parent.move(item.obj, self.getCurrentDir())
 
   def onItemDoubleClicked(self, item):
     if isinstance(item.obj, Link):
@@ -519,8 +534,11 @@ class ObjTree(QTreeWidget): # TODO
     k = event.key()
     if k == Qt.Key_Escape:
       self.parent.select(None)
-    elif k == Qt.Key_Delete:
-      self.parent.delete(sel)
+    elif k == Qt.Key_Shift:
+      self.setSelectionMode(QAbstractItemView.NoSelection)
+      self.refactoring = True
+##    elif k == Qt.Key_Delete:
+##      self.parent.delete(sel)
     elif k == Qt.Key_Space:
       selItems = self.selectedItems()
       if selItems:
@@ -534,11 +552,47 @@ class ObjTree(QTreeWidget): # TODO
     elif k == Qt.Key_Down:
       self.parent.selectNextSibling()
 
-    def mousePressEvent(self, event):
-      print(event.pos())
-      item = self.indexAt(event.pos())
-      if (item.row() == item.column() == -1):
-        self.parent.select(None)
+  def keyReleaseEvent(self, event):
+    k = event.key()
+    if k == Qt.Key_Shift:
+      self.setSelectionMode(QAbstractItemView.SingleSelection)
+      self.refactoring = False
+
+  def focusOutEvent(self, event):
+    self.itemDragged = None
+    self.setSelectionMode(QAbstractItemView.SingleSelection)
+    self.refactoring = False
+
+  def mousePressEvent(self, event):
+    index = self.indexAt(event.pos())
+    if (index.row() == -1):
+      self.parent.select(None)
+    else:
+      self.itemDragged = self.itemAt(event.pos())
+      super().mousePressEvent(event)
+
+  def mouseReleaseEvent(self, event):
+    self.itemDragged = None
+
+  def dragMoveEvent(self, event):
+    index = self.indexAt(event.pos())
+    if (index.row() == -1):
+      return
+    item = self.itemAt(event.pos())
+    if isinstance(item.obj, Directory):
+      event.accept()
+      super().dragMoveEvent(event)
+    else:
+      event.ignore()
+
+  def dropEvent(self, event):
+    index = self.indexAt(event.pos())
+    if (index.row() == -1):
+      return
+    item = self.itemAt(event.pos())
+    if not isinstance(item.obj, Directory) or self.itemDragged is None:
+      return
+    self.parent.move(self.itemDragged.obj, item.obj)
   
 class Modal(QDialog):
   '''A dialog box that grabs focus until closed'''
@@ -621,8 +675,8 @@ class MainApp(QMainWindow):
     self.resize(1000, 500)
     self.setWindowIcon(self.icons["Model"])
     self.setWindowTitle(APPNAME)
-    self.newProject(silent=True)
     self.show()
+    self.newProject(silent=True, base=True)
     self.S = Saver(self)
     
     self.setAcceptDrops(True)
@@ -636,6 +690,7 @@ class MainApp(QMainWindow):
                           ("Success", QStyle.SP_DialogApplyButton),
                           ("Warning", QStyle.SP_MessageBoxWarning),
                           ("Error", QStyle.SP_MessageBoxCritical),
+                          ("Question", QStyle.SP_MessageBoxQuestion),
                           ("Save", QStyle.SP_DialogSaveButton),
                           ("Open", QStyle.SP_DialogOpenButton),
                           ("New", QStyle.SP_DialogResetButton),
@@ -723,6 +778,9 @@ class MainApp(QMainWindow):
     view.addAction(self.viewMenu_env)
     view.addAction(self.viewMenu_edit)
     view.addAction(self.viewMenu_log)
+    helpMenu = bar.addMenu("&Help")
+    self.helpMenu_help = QAction(self.icons["Question"], "&Help")
+    helpMenu.addAction(self.helpMenu_help)
 
     self.gl = glWidget(self)
     self.setCentralWidget(self.gl)
@@ -778,7 +836,16 @@ class MainApp(QMainWindow):
     self.logEntry("Info", "Welcome to %s (beta version)"%APPNAME)
     self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
 
-    self.fileMenu_new.triggered.connect(self.newProject)
+    self.helpPane = QDockWidget("Help", self)
+    self.help = QTextEdit(readOnly=True)
+    self.help.setFontFamily("Consolas")
+    self.help.setText(open("./assets/text/help.txt").read())
+    self.helpPane.setWidget(self.help)
+    self.addDockWidget(Qt.BottomDockWidgetArea, self.helpPane)
+    self.helpPane.setFloating(True)
+    self.helpPane.hide()
+
+    self.fileMenu_new.triggered.connect(lambda: self.newProject(base=True))
     self.fileMenu_open.triggered.connect(self.openProject)
     self.fileMenu_save.triggered.connect(self.saveProject)
     self.fileMenu_saveas.triggered.connect(self.saveasProject)
@@ -795,6 +862,7 @@ class MainApp(QMainWindow):
     self.envPane.visibilityChanged.connect(self.updateMenu)
     self.editPane.visibilityChanged.connect(self.updateMenu)
     self.logPane.visibilityChanged.connect(self.updateMenu)
+    self.helpMenu_help.triggered.connect(self.showHelp)
 
   def _init_hotkeys(self):
     def quickShortcut(keySeq, qaction):
@@ -803,7 +871,6 @@ class MainApp(QMainWindow):
     quickShortcut("Ctrl+O", self.fileMenu_open)
     quickShortcut("Ctrl+S", self.fileMenu_save)
     quickShortcut("Ctrl+Shift+S", self.fileMenu_saveas)
-    quickShortcut("F12", self.fileMenu_saveas) # Windows standard
     quickShortcut("Ctrl+E", self.fileMenu_exportimage)
     quickShortcut("Ctrl+M", self.fileMenu_loadmeshes)
     quickShortcut("Ctrl+T", self.fileMenu_loadtextures)
@@ -812,6 +879,8 @@ class MainApp(QMainWindow):
     quickShortcut("Ctrl+Shift+L", self.sceneMenu_makelights)
     quickShortcut("Ctrl+Shift+G", self.sceneMenu_makegroups)
     quickShortcut("Ctrl+G", self.sceneMenu_quickgroup)
+
+    quickShortcut("F1", self.helpMenu_help)
 
     def quickKeybind(keySeq, func):
       shortcut = QShortcut(QKeySequence(keySeq), self)
@@ -826,9 +895,16 @@ class MainApp(QMainWindow):
     self.keyBind_deeppasteselected = quickKeybind("Shift+;", self.deepPasteSelected) # used when moving with Shift
     self.keyBind_shallowpasteclipboard = quickKeybind("Ctrl+Shift+V", self.shallowPasteClipboard)
     self.keyBind_shallowpasteselected = quickKeybind("Shift+'", self.shallowPasteSelected) # used when moving wih Shift
+    self.keyBind_deleteselected = quickKeybind("Delete", self.deleteSelected)
     self.keyBind_focuscenter = quickKeybind("/", self.focusCenter)
 
+  def showHelp(self):
+    self.helpPane.show()
+    self.helpPane.activateWindow()
+    self.helpPane.setFocus()
+
   def focusCenter(self):
+    self.activateWindow()
     self.centralWidget().setFocus()
 
   def updateMenu(self):
@@ -900,19 +976,20 @@ class MainApp(QMainWindow):
     else:
       self.setWindowTitle(fn)
 
-  def newProject(self, silent=False):
+  def newProject(self, silent=False, base=False):
     '''Clear user environment and QListWidgets'''
     if not silent and not YNPrompt(self, "New", "Make new project? All unsaved changed will be lost.", factory=QMessageBox.warning):
       return
     self.clearLists()
     self.R.new()
+    if base:
+      self.add(Directory(name="Main"))
     self.select(None)
     engine.monoselected = None
     if not silent:
       self.logEntry("Success", "Initialised new project.")
     self.setCurrentFilename(None, silent=silent)
     self.update()
-    
 
   def saveProject(self):
     '''Try to save from last filename, else prompt to save project'''
@@ -1085,6 +1162,7 @@ class MainApp(QMainWindow):
 
   def makeModels(self):
     '''Shows modal for making models'''
+    print(0)
     M = Modal(self)
     M.setWindowTitle("Make Models")
     layout = QGridLayout()
@@ -1650,7 +1728,7 @@ class MainApp(QMainWindow):
     '''Deletes object (Mesh, Tex, Model, or Light) from user environment, ui list, and file cache and deselects it'''
     # Remove from list
     if isinstance(obj, Renderable):
-      self.rendTree.take(obj)
+      self.rendTree.delete(obj)
     listDict = {Mesh: self.meshList,
                 Tex: self.texList,
                 Model: self.modelList,
@@ -1713,11 +1791,16 @@ class MainApp(QMainWindow):
 
   def move(self, rend, directory):
     try:
+      if rend.parent is None:
+        self.UE.scene.discard(rend)
       rend.setParent(directory)
+      if rend.parent is None:
+        self.UE.scene.add(rend)
     except TreeError as e:
       self.logEntry("Error", "Symlink cycle: %s"%e)
     else:
       self.rendTree.move(rend, directory)
+      self.gl.update()
 
   def cutSelected(self):
     self.copySelected()
@@ -2009,6 +2092,7 @@ class MainApp(QMainWindow):
     self.envPane.hide()
     self.editPane.hide()
     self.logPane.hide()
+    self.helpPane.hide()
     self.S.update()
     print("Goodbye!")
 

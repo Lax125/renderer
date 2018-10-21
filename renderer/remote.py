@@ -8,8 +8,8 @@ All user-friendly functions to modify a UserEnv go here.
 from all_modules import *
 
 from rotpoint import Rot, Point
-from assetloader import Asset, Mesh, Tex
-from engine import Renderable, Model, Light, Camera, Scene
+from asset import Asset, Mesh, Tex
+from engine import Renderable, Model, Light, Directory, Link, Camera, Scene
 from appdata import *
 import saver
 

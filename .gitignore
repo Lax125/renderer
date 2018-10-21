@@ -106,3 +106,6 @@ venv.bak/
 # Big files
 projects/
 *.pptx
+
+# Builds
+builds/

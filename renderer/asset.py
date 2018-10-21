@@ -1,7 +1,7 @@
 #!/usr/bin/python
 
 '''
-assetloader.py
+asset.py
 original source: https://github.com/edward344/PyOpenGL-sample/blob/master/graphics.py
 changes:
     - texture coordinates specific to each face are taken into account
