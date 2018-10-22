@@ -62,7 +62,7 @@ Tb > Scene > Make Groups, Ctrl+Shift+G: Construct groups (directories)
 Tb > Scene > Make Group Here, Ctrl+G: Construct group at current camera location
 Environment > SE tree view > Click on SE: Select scene element
 Environment > SE tree view > [Up, Down, Left, Right]: Move selection cursor
-Environment > SE tree view > Space: Expand/Collapse Group
+Environment > SE tree view > [Enter, Return]: Expand/Collapse Group
 Edit > SE > Delete: Delete scene element
 Edit > SE > Pose: Pose scene element
 Edit > SE > Change: Change assets used for SE

@@ -539,7 +539,7 @@ class ObjTree(QTreeWidget):
       self.refactoring = True
 ##    elif k == Qt.Key_Delete:
 ##      self.parent.delete(sel)
-    elif k == Qt.Key_Space:
+    elif k == Qt.Key_Return:
       selItems = self.selectedItems()
       if selItems:
         selItems[0].setExpanded(not selItems[0].isExpanded())
