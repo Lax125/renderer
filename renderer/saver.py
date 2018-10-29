@@ -3,14 +3,8 @@ from all_modules import *
 
 from appdata import *
 from rotpoint import Rot, Point
-from engine import Model, Light, Directory, Link
-from asset import Mesh, Tex, id_gen
-
-def lazyReadlines(f):
-  l = f.readline()
-  while l:
-    yield l
-    l = f.readline()
+from engine import Model, Lamp, Directory, Link
+from asset import Mesh, Tex, Bulb, id_gen
 
 def castList(types, l):
   casted = [T(a) for T, a in zip(types, l)]
@@ -45,8 +39,10 @@ class Saver:
     self.app = app
     self.defaultMesh = Mesh("./assets/meshes/_default.obj")
     self.defaultTexture = Tex("./assets/textures/_default.png")
+    self.defaultBulb = Bulb()
     self.defaultMesh.delete()
     self.defaultTexture.delete()
+    self.defaultBulb.delete()
 
   def update(self):
     # copy save into tmp, ignoring unused asset files (Even though there should be NO unused asset files)
@@ -65,8 +61,10 @@ class Saver:
       # because having two competing standards is confusing
       meshPlacements = id_gen(1) # yields 1, 2, 3, ...
       texturePlacements = id_gen(1) # yields 1, 2, 3, ...
+      bulbPlacements = id_gen(1)
       mDict = ddict(int) # mesh ID -> placement index {1, 2, 3, ...}
       tDict = ddict(int) # texture ID -> placement index {1, 2, 3, ...}
+      bDict = ddict(int) # bulb ID -> placement index {1, 2, 3, ...}
       for asset in self.UE.assets:
         if type(asset) is Mesh:
           shutil.copy(datapath("save/assets/meshes/%d.obj"%asset.ID),
@@ -77,8 +75,13 @@ class Saver:
         elif type(asset) is Tex:
           shutil.copy(datapath("save/assets/textures/%d.png"%asset.ID),
                       datapath("tmp/assets/textures/%d.png"%asset.ID))
-          f.write("t '%s' %d\n"%(asset.name, asset.ID))
+          f.write("t '%s' %d %s %s %s %s\n"%(asset.name, asset.ID,
+                                             asset.diffuse, asset.specular, asset.fresnel,
+                                             asset.shininess))
           tDict[asset.ID] = next(texturePlacements)
+        elif type(asset) is Bulb:
+          f.write("b '%s' %d %s %s %s %s\n"%(asset.name, asset.ID, *asset.color, asset.power))
+          bDict[asset.ID] = next(bulbPlacements)
 
       dirPlacements = id_gen(1)
       dirDict = {None: 0} # directory -> placement index
@@ -87,6 +90,11 @@ class Saver:
           f.write("model '%s' %d %d %s %s %d\n"%(rend.name, mDict[rend.mesh.ID], tDict[rend.tex.ID],
                                                  strPosRot(rend), rend.scale,
                                                  rend.visible))
+        elif type(rend) is Lamp:
+          f.write("lamp '%s' %d %s %s %d\n"%(rend.name, bDict[rend.bulb.ID],
+                                             strPosRot(rend), rend.scale,
+                                             rend.visible))
+          
         elif type(rend) is Directory:
           dirDict[rend] = next(dirPlacements)
           f.write("DIR '%s' %s %s %d\n"%(rend.name, strPosRot(rend), rend.scale, rend.visible))
@@ -144,9 +152,11 @@ class Saver:
   def load_appdata(self):
     meshes = [self.defaultMesh]
     textures = [self.defaultTexture]
+    bulbs = [self.defaultBulb]
     directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
     dirStack = [None]
-    for line in lazyReadlines(dataopen("tmp/blueprint.dat", "r")):
+    for line in dataopen("tmp/blueprint.dat", "r"):
+      print(line, end="")
       words = shlex.split(line)
       if not words:
         continue
@@ -165,21 +175,42 @@ class Saver:
           meshes.append(new_mesh)
           
       elif command == "t": # texture
-        name, ID = castList([str, int], args)
+        name, ID, diffuse, specular, fresnel, shininess = castList([str, int, *[float]*3, float], args)
         if ID == 0:
           textures.append(self.defaultTexture)
         else:
-          new_tex = Tex(datapath("tmp/assets/textures/%d.png"%ID), name=name)
+          new_tex = Tex(datapath("tmp/assets/textures/%d.png"%ID),
+                        diffuse=diffuse, specular=specular, fresnel=fresnel,
+                        name=name)
           self.app.add(new_tex)
           textures.append(new_tex)
+
+      elif command == "b": # bulb
+        name, ID, R,G,B, power = castList([str, int, *[float]*3, float], args)
+        if ID == 0:
+          bulbs.append(self.defaultBulb)
+        else:
+          new_bulb = Bulb(color=(R,G,B), power=power, name=name)
+          self.app.add(new_bulb)
+          bulbs.append(new_bulb)
 
       elif command == "model":
         name, meshIndex, texIndex, x,y,z,rx,ry,rz, scale, visible\
           = castList([str, int, int, *[float]*6, float, int], args)
-        new_model = Model(meshes[meshIndex], textures[texIndex], pos=Point(x,y,z),
-                          rot=Rot(rx,ry,rz), scale=scale,
-                          visible=visible, name=name)
+        new_model = Model(meshes[meshIndex], textures[texIndex],
+                          pos=Point(x,y,z), rot=Rot(rx,ry,rz),
+                          scale=scale, visible=visible,
+                          name=name)
         self.app.add(new_model)
+
+      elif command == "lamp":
+        name, bulbIndex, x,y,z,rx,ry,rz, scale, visible\
+          = castList([str, int, *[float]*6, float, int], args)
+        new_lamp = Lamp(bulbs[bulbIndex],
+                        pos=Point(x,y,z), rot=(rx,ry,rz),
+                        scale=scale, visible=visible,
+                        name=name)
+        self.app.add(new_lamp)
 
       elif command == "DIR":
         name, x,y,z,rx,ry,rz, scale, visible\
@@ -202,7 +233,7 @@ class Saver:
 
       elif command == "cam":
         x,y,z,rx,ry,rz, fovy, zoom = castList([*[float]*6, float, float], args)
-        self.R.configCamera(Point(x,y,z), Rot(rx, ry, rz), fovy, zoom)
+        self.R.configCamera(Point(x,y,z), Rot(rx,ry,rz), fovy, zoom)
 
   def canRestore(self):
     return os.path.isfile(datapath("tmp/blueprint.dat"))

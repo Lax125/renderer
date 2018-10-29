@@ -10,3 +10,5 @@ QTabWidget.BigTabs {
 }
 
 QTabWidget.BigTabs > QTabBar::tab {height:50px; width:63px;}
+
+QLineEdit {qproperty-alignment: AlignCenter;}

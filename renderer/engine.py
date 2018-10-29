@@ -17,7 +17,7 @@ from all_modules import *
 #   - DESCRIBING POSITIONS IN 3-D AND ROTATIONAL ORIENTATION
 #   - LOADING SHADERS
 from rotpoint import Point, Rot
-import shader
+from shader import *
 
 # FOR LOGGING
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
@@ -41,6 +41,10 @@ def mix_permute(A, B):
 def glGetModelview(): # convenience: get modelview matrix
   return glGetFloatv(GL_MODELVIEW_MATRIX)
 
+def glGetModelviewPos():
+  M = glGetModelview()
+  return np.array([M[3,0], M[3,1], M[3,2]])
+
 def glApplyRot(rot, invert=False):
   rx, ry, rz = rot
   if not invert:
@@ -57,11 +61,14 @@ def glGetScale():
   return (A[0,0]**2 + A[1,0]**2 + A[2,0]**2)**0.5
 
 def gluCamera(camera, aspect):
-    glLoadIdentity()
-    defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
-    gluPerspective(defacto_fovy, aspect, *camera.zRange)
-    gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
-    glTranslatef(*-camera.pos)
+  glMatrixMode(GL_PROJECTION)
+  glLoadIdentity()
+  defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
+  gluPerspective(defacto_fovy, aspect, *camera.zRange)
+  gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
+  glMatrixMode(GL_MODELVIEW)
+  glLoadIdentity()
+  glTranslatef(*-camera.pos)
 
 class Camera:
   '''Describes a camera in 3-D position and rotation'''
@@ -84,7 +91,7 @@ class Camera:
     return degrees(atan(tan(radians(self.fovy)/2)/self.zoom))*2
 
 class Renderable:
-  '''Base class for renderable objects: Models, Lights'''
+  '''Base class for renderable objects: Models, Lamps'''
   
   def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, visible=True, name="renderable0"):
     self.parent = None
@@ -119,6 +126,9 @@ class Renderable:
   def place(self): # overload with function that puts the renderable in the OpenGL environment
     pass
 
+  def placeASel(self):
+    pass
+
   def placeSel(self): # place extra stuff because i am selected
     pass
 
@@ -126,6 +136,7 @@ class Renderable:
     pass
 
   def placeBBox(self):
+    PLAIN_SHADER.use()
     glEnable(GL_BLEND)
     glColor4f(1.0, 1.0, 1.0, 0.75)
     glLineWidth(3)
@@ -139,6 +150,7 @@ class Renderable:
     glDisable(GL_BLEND)
 
   def placeAxes(self):
+    PLAIN_SHADER.use()
     glLineWidth(5)
     V, C, LINE_I = self.vbo_axes_buffers
     glEnableClientState(GL_VERTEX_ARRAY)
@@ -153,6 +165,7 @@ class Renderable:
     glDisableClientState(GL_COLOR_ARRAY)
 
   def placePlanes(self):
+    PLAIN_SHADER.use()
     # Face culling is, by default, disabled
     glEnable(GL_BLEND) # needed for alpha
     glDepthMask(False) # prevent writing to depth buffer
@@ -167,6 +180,7 @@ class Renderable:
     glDisable(GL_BLEND) # needed for alpha
 
   def placeOrigin(self):
+    PLAIN_SHADER.use()
     glEnable(GL_BLEND)
     glColor4f(0.0, 0.0, 1.0, 0.2)
 ##    glLineWidth(10)
@@ -177,11 +191,16 @@ class Renderable:
 ##    gluSphere(gluNewQuadric(), scale, 25, 25)
     gluSphere(gluNewQuadric(), 1, 25, 25)
     glDisable(GL_BLEND)
+
+  def renderLight(self):
+    pass
   
-  def render(self):
+  def render(self, ancestorSelected=False):
     self.glMat()
     if self.visible:
       self.place()
+    if ancestorSelected:
+      self.placeASel()
     if self in selected:
       self.placeBBox()
       self.placeSel()
@@ -429,10 +448,20 @@ class Model(Renderable):
     return copy.copy(self) # i am a dead end
 
   def place(self):
+    PHONG_SHADER.use()
     glColor4f(1.0, 1.0, 1.0, 1.0)
     self.mesh.render(self.tex)
 
+  def placeASel(self):
+    PLAIN_SHADER.use()
+    glEnable(GL_BLEND)
+    glColor4f(0.79, 0.75, 1.0, 0.5)
+    glLineWidth(2)
+    self.mesh.render_wireframe()
+    glDisable(GL_BLEND)
+
   def placeSel(self):
+    PLAIN_SHADER.use()
     glEnable(GL_BLEND)
     glColor4f(0.79, 1.0, 0.75, 0.5)
     glLineWidth(2)
@@ -444,8 +473,31 @@ class Model(Renderable):
     self.maxPoint = Point(*self.mesh.max_xyz)
     super().update_bbox()
 
-class Light(Renderable):
-  pass #TODO
+class Lamp(Renderable):
+  '''A light source'''
+  i = 0
+  lPositions = np.empty((MAX_LIGHTS, 3), np.float32)
+  lColorPowers = np.empty((MAX_LIGHTS, 3), np.float32)
+  def __init__(self, bulb, *args, **kwargs):
+    self.bulb = bulb
+    super().__init__(*args, **kwargs)
+
+  def begin():
+    Lamp.i = 0
+
+  def renderLight(self):
+    if not self.visible:
+      return
+    self.glMat()
+    Lamp.lPositions[Lamp.i] = glGetModelviewPos()
+    Lamp.lColorPowers[Lamp.i] = np.array(self.bulb.color) * self.bulb.power
+    Lamp.i += 1
+
+  def end():
+    PHONG_SHADER.use()
+    glUniform1i(Shader.current.uniformLocs["lCount"], Lamp.i)
+    glUniform3fv(Shader.current.uniformLocs["lPositions"], Lamp.i, Lamp.lPositions)
+    glUniform3fv(Shader.current.uniformLocs["lColorPowers"], Lamp.i, Lamp.lColorPowers)
 
 class Directory(Renderable):
   # Provides an OpenGL matrix transformation to put other Renderables in
@@ -480,13 +532,22 @@ class Directory(Renderable):
   def clear(self):
     self.rends.clear()
 
-  def render(self):
-    super().render()
+  def renderLight(self):
+    super().renderLight()
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderLight()
+      glPopMatrix()
+
+  def render(self, ancestorSelected=False):
+    super().render(ancestorSelected=ancestorSelected)
+    if self in selected:
+      ancestorSelected = True
     if not self.visible:
       return
     for rend in self.rends:
       glPushMatrix()
-      rend.render()
+      rend.render(ancestorSelected=ancestorSelected)
       glPopMatrix()
 
   def renderSelectedAE(self):
@@ -545,13 +606,13 @@ class Link(Renderable): # TODO: more overloads
   def __deepcopy__(self, memo):
     return copy.copy(self)
 
-  def render(self):
-    super().render()
+  def render(self, ancestorSelected=False):
+    super().render(ancestorSelected=ancestorSelected)
     if not self.visible:
       return
     for rend in self.directory.rends:
       glPushMatrix()
-      rend.render()
+      rend.render(ancestorSelected=ancestorSelected)
       glPopMatrix()
 
   def renderSelectedAE(self):
@@ -607,29 +668,27 @@ class Scene:
     self.rends.clear()
 
   def render(self, camera, aspect=1.33, mode="full", shader_name="basic"):
-    global camPos, camTrueFovy
+    global camPos, camTrueFovy, PHONG_SHADER
     camPos = camera.pos
     camTrueFovy = camera.getTrueFovy()
-    glClearColor(0.0, 0.0, 0.1, 0.0)
+    glClearColor(0.0, 0.0, 0.0, 0.0)
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
-    glMatrixMode(GL_MODELVIEW)
-
-    # Select shader
-##    shader.use(shader_name)
-
-    # Ambient lighting
-##    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, [0.5, 0.5, 0.5, 1.0])
-
-    # You have a torch with you
-##    glLightfv(GL_LIGHT0, GL_DIFFUSE, [10.0, 10.0, 10.0, 1.0])
-##    glLightfv(GL_LIGHT0, GL_SPECULAR, [2.0, 2.0, 2.0, 1.0])
-##    glLighti(GL_LIGHT0, GL_SPOT_CUTOFF, 30)
-##    glLightfv(GL_LIGHT0, GL_POSITION, [*camera.pos, 1.0])
-##    glLightfv(GL_LIGHT1, GL_POSITION, [0, 0, 0, 0])
-##    glEnable(GL_LIGHT1)
-
     # Push camera position/perspective matrix onto stack
     gluCamera(camera, aspect) # custom convenience function
+    glMatrixMode(GL_MODELVIEW)
+
+    # Initialize GL_LIGHT0
+    glEnable(GL_LIGHT0)
+    glLightfv(GL_LIGHT0, GL_POSITION, (0.0, 0.0, 0.0)) # at camera
+    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1.0))
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1.0))
+
+    Lamp.begin()
+    for rend in self.rends:
+      glPushMatrix()
+      rend.renderLight()
+      glPopMatrix()
+    Lamp.end()
 
     for rend in self.rends & selected:
       glPushMatrix()
@@ -653,17 +712,6 @@ class Scene:
       rend.renderOverlay()
       glPopMatrix()
 
-##  def renderOverlay(self, camera, aspect=1.33): # PyQt's OpenGL context has an overlay layer built in
-##    glClearColor(0.0, 0.0, 0.0, 0.0)
-##    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
-##    glMatrixMode(GL_MODELVIEW)
-##    gluCamera(camera, aspect)
-##
-##    for rend in self.rends:
-##      glPushMatrix()
-##      rend.renderOverlay()
-##      glPopMatrix()
-
   def debug_tree(self):
     def tree(rend):
       yield "%d: %s"%(id(rend), rend.name)
@@ -683,15 +731,18 @@ def initEngine(): # only call once context has been established
   global initialised
   if initialised:
     return
-  
-  shader.init()
 
+  global PHONG_SHADER, PLAIN_SHADER
+  PHONG_SHADER = Shader(*SHADER_FILENAME_PAIRS["phong"])
+  PLAIN_SHADER = Shader(*SHADER_FILENAME_PAIRS["plain"])
+  
   # Enable wanted gl modes
   glEnable(GL_DEPTH_TEST)
   glEnable(GL_NORMALIZE)
   glEnable(GL_POLYGON_SMOOTH)
   glEnable(GL_DITHER)
-##  glBlendEquation(GL_FUNC_ADD)
+  glEnable(GL_MULTISAMPLE)
+  glEnable(GL_LIGHTING)
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
   glFogi(GL_FOG_MODE, GL_EXP)
   glFogf(GL_FOG_END, 1000.0)

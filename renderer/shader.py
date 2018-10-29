@@ -3,6 +3,7 @@
 shader.py
 
 describes how lighting should interact with drawn elements.
+
 "Let there be light," said God.
 However, his words had no effect.
 He forgot to add a shader.
@@ -10,27 +11,36 @@ He forgot to add a shader.
 
 from all_modules import *
 
-VSHADER_BASIC = open("vshader_basic.cpp").read()
-FSHADER_BASIC = open("fshader_basic.cpp").read()
+SHADER_FILENAME_PAIRS = {"phong": ("vshader_phong.glsl", "fshader_phong.glsl"),
+                         "plain": ("vshader_plain.glsl", "fshader_plain.glsl")}
 
-def load_pair(vscode, fscode):
-  VS = shaders.compileShader(vscode, GL_VERTEX_SHADER)
-  FS = shaders.compileShader(fscode, GL_FRAGMENT_SHADER)
-  return shaders.compileProgram(VS, FS)
+class Shader:
+  current = None
+  def __init__(self, vsfn, fsfn):
+    try:
+      self.vertShader = shaders.compileShader(open(vsfn).read(), GL_VERTEX_SHADER)
+      self.fragShader = shaders.compileShader(open(fsfn).read(), GL_FRAGMENT_SHADER)
+      self.program = shaders.compileProgram(self.vertShader, self.fragShader)
+    except:
+      traceback.print_exc()
+      sys.exit(1)
+    self.uniformLocs = {"texture": glGetUniformLocation(self.program, "texture"),
+                        "ambient": glGetUniformLocation(self.program, "ambient"),
+                        "diffuse": glGetUniformLocation(self.program, "diffuse"),
+                        "specular": glGetUniformLocation(self.program, "specular"),
+                        "fresnel": glGetUniformLocation(self.program, "fresnel"),
+                        "shininess": glGetUniformLocation(self.program, "shininess"),
+                        "lCount": glGetUniformLocation(self.program, "lCount"),
+                        "lData": glGetUniformLocation(self.program, "lData"),
+                        "lPositions": glGetUniformLocation(self.program, "lPositions"),
+##                        "lPowers": glGetUniformLocation(self.program, "lPowers"),
+##                        "lColors": glGetUniformLocation(self.program, "lColors"),
+                        "lColorPowers": glGetUniformLocation(self.program, "lColorPowers"),
+##                        "lDirections": glGetUniformLocation(self.program, "lDirections"),
+##                        "lAOEs": glGetUniformLocation(self.program, "lAOEs"),
+                        }
 
-shaderDict = {"basic": (VSHADER_BASIC, FSHADER_BASIC),
-             }
-
-def init():
-  global shaderDict
-  shaderDict = {name: load_pair(vscode, fscode) for name, (vscode, fscode) in shaderDict.items()}
-
-def use(shader_name):
-  shaders.glUseProgram(shaderDict[shader_name])
-
-if __name__ == "__main__":
-  import pygame
-  from pygame import *
-  pygame.display.set_mode((100, 100), OPENGL)
-  use("basic")
+  def use(self):
+    Shader.current = self
+    shaders.glUseProgram(self.program)
  

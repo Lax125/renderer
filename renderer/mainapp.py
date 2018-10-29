@@ -10,15 +10,15 @@ Makes the graphical application and runs the main systems
 from all_modules import *
 
 from rotpoint import Rot, Point
-from asset import id_gen, Asset, Mesh, Tex
-from engine import Renderable, Model, Light, Directory, Link, initEngine, TreeError
+from asset import id_gen, Asset, Mesh, Tex, Bulb
+from engine import Renderable, Model, Lamp, Directory, Link, initEngine, TreeError
 import engine
 from userenv import UserEnv
 from remote import Remote
 from saver import Saver
 
 def basePosRot(truePos, trueRot, sel):
-  if sel is None:
+  if not isinstance(sel, Renderable):
     return truePos, trueRot
   elif isinstance(sel, Directory):
     return sel.getBasePos(truePos), sel.getBaseRot(trueRot)
@@ -31,6 +31,13 @@ def shortfn(fn):
 def cyclamp(x, R): # Like modulo, but based on custom range
   a, b = R
   return (x-a)%(b-a) + a
+
+def rrggbb(r,g,b):
+  '''Takes r,g,b floats and returns color code in #rrggbb format'''
+  rr = "%02x"%int(r*255)
+  gg = "%02x"%int(g*255)
+  bb = "%02x"%int(b*255)
+  return "#%s%s%s"%(rr,gg,bb)
 
 def getTimestamp():
   return strftime("UTC %y-%m-%d %H:%M:%S", gmtime())
@@ -284,7 +291,7 @@ class glWidget(QGLWidget):
     
 
 class ObjList(QListWidget):
-  '''QListWidget of environment objects (Mesh, Tex, Model, Light)'''
+  '''QListWidget of environment objects (Mesh, Tex, Model, Lamp)'''
   iconDict = dict() # obj type --> icon
   bgDict = dict() # obj type --> bg brush
   def __init__(self, *args, **kwargs):
@@ -323,7 +330,7 @@ class ObjList(QListWidget):
     self.addItem(new_item)
     if isinstance(obj, Renderable):
       flags = new_item.flags()|Qt.ItemIsUserCheckable
-      if type(obj) in [Model, Light, Link]:
+      if type(obj) in [Model, Lamp, Link]:
         flags |= Qt.ItemNeverHasChildren
       if isinstance(obj, Directory):
         flags |= Qt.ShowIndicator
@@ -357,8 +364,9 @@ class ObjList(QListWidget):
 class ObjNode(QTreeWidgetItem):
   objTypenameDict = {Mesh: "Mesh",
                      Tex: "Texture",
+                     Bulb: "Bulb",
                      Model: "Model",
-                     Light: "Light",
+                     Lamp: "Lamp",
                      Directory: "GROUP",
                      Link: "SYMLINK"}
   iconDict = dict()
@@ -378,7 +386,7 @@ class ObjNode(QTreeWidgetItem):
     if isinstance(obj, Directory):
       self.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
 
-  def __lt__(self, node, typeOrder=[Directory, Link, Light, Model, Tex, Mesh]):
+  def __lt__(self, node, typeOrder=[Directory, Link, Lamp, Model, Tex, Mesh]):
     column = self.treeWidget().sortColumn()
     if column == 1:
       return typeOrder.index(type(self.obj)) < typeOrder.index(type(node.obj))
@@ -417,12 +425,9 @@ class ObjTree(QTreeWidget):
     self.parent = self.parentWidget()
     self.objNodeDict = dict() # asset/renderable --> node
     self.groupNums = id_gen()
-    self.itemChanged.connect(self.onItemChanged)
-    self.itemSelectionChanged.connect(self.onItemSelectionChanged)
     self.itemClicked.connect(self.onItemClicked)
-    self.itemDoubleClicked.connect(self.onItemDoubleClicked)
+    self.itemSelectionChanged.connect(self.onItemSelectionChanged)
     self.setSortingEnabled(True)
-    self.refactoring = False
     
   def add(self, obj, directory=None):
     '''Adds ObjNode to a directory'''
@@ -501,7 +506,7 @@ class ObjTree(QTreeWidget):
       return parentItem.obj
     return None
 
-  def onItemChanged(self, item):
+  def onItemClicked(self, item):
     if isinstance(item.obj, Renderable):
       item.obj.visible = item.checkState(2)==2
       self.parent.update()
@@ -512,15 +517,6 @@ class ObjTree(QTreeWidget):
       self.parent.select(selItems[0].obj)
       if isinstance(selItems[0].obj, Renderable):
         self.parent.R.lookAt(selItems[0].obj)
-  
-  def onItemClicked(self, item):
-    if self.refactoring:
-      self.parent.move(item.obj, self.getCurrentDir())
-
-  def onItemDoubleClicked(self, item):
-    if isinstance(item.obj, Link):
-      self.parent.select(item.obj.directory)
-      self.parent.R.lookAt(item.obj.directory)
 
   def keyPressEvent(self, event):
     cam = self.parent.UE.camera
@@ -534,11 +530,6 @@ class ObjTree(QTreeWidget):
     k = event.key()
     if k == Qt.Key_Escape:
       self.parent.select(None)
-    elif k == Qt.Key_Shift:
-      self.setSelectionMode(QAbstractItemView.NoSelection)
-      self.refactoring = True
-##    elif k == Qt.Key_Delete:
-##      self.parent.delete(sel)
     elif k == Qt.Key_Return:
       selItems = self.selectedItems()
       if selItems:
@@ -552,16 +543,8 @@ class ObjTree(QTreeWidget):
     elif k == Qt.Key_Down:
       self.parent.selectNextSibling()
 
-  def keyReleaseEvent(self, event):
-    k = event.key()
-    if k == Qt.Key_Shift:
-      self.setSelectionMode(QAbstractItemView.SingleSelection)
-      self.refactoring = False
-
   def focusOutEvent(self, event):
     self.itemDragged = None
-    self.setSelectionMode(QAbstractItemView.SingleSelection)
-    self.refactoring = False
 
   def mousePressEvent(self, event):
     index = self.indexAt(event.pos())
@@ -573,26 +556,17 @@ class ObjTree(QTreeWidget):
 
   def mouseReleaseEvent(self, event):
     self.itemDragged = None
-
-  def dragMoveEvent(self, event):
-    index = self.indexAt(event.pos())
-    if (index.row() == -1):
-      return
-    item = self.itemAt(event.pos())
-    if isinstance(item.obj, Directory):
-      event.accept()
-      super().dragMoveEvent(event)
-    else:
-      event.ignore()
+    super().mouseReleaseEvent(event)
 
   def dropEvent(self, event):
     index = self.indexAt(event.pos())
     if (index.row() == -1):
       return
     item = self.itemAt(event.pos())
-    if not isinstance(item.obj, Directory) or self.itemDragged is None:
-      return
-    self.parent.move(self.itemDragged.obj, item.obj)
+    if isinstance(item.obj, Directory) or self.itemDragged is None:
+      self.parent.move(self.itemDragged.obj, item.obj)
+    else:
+      self.parent.move(self.itemDragged.obj, item.obj.parent)
   
 class Modal(QDialog):
   '''A dialog box that grabs focus until closed'''
@@ -707,8 +681,9 @@ class MainApp(QMainWindow):
 
     for name, fn in [("Mesh", r"./assets/icons/mesh.png"),
                      ("Texture", r"./assets/icons/texture.png"),
+                     ("Bulb", r"./assets/icons/bulb.png"),
                      ("Model", r"./assets/icons/model.png"),
-                     ("Light", r"./assets/icons/light.png"),
+                     ("Lamp", r"./assets/icons/lamp.png"),
                      ("Object Group", r"./assets/icons/objectgroup.png"),
                      ("Link", r"./assets/icons/link.png"),
                      ("3D Scene", r"./assets/icons/3dscene.png"),
@@ -716,7 +691,8 @@ class MainApp(QMainWindow):
                      ("Edit", r"./assets/icons/edit.png"),
                      ("Camera", r"./assets/icons/camera.png"),
                      ("Selected", r"./assets/icons/selected.png"),
-                     ("Image File", r"./assets/icons/imagefile.png")]:
+                     ("Image File", r"./assets/icons/imagefile.png"),
+                     ("Color", r"./assets/icons/color.png")]:
       self.icons[name] = QIcon(fn)
 
     self.fonts = dict()
@@ -724,15 +700,16 @@ class MainApp(QMainWindow):
 
     iconDict = {Mesh: self.icons["Mesh"],
                 Tex: self.icons["Texture"],
+                Bulb: self.icons["Bulb"],
                 Model: self.icons["Model"],
-                Light: self.icons["Light"],
+                Lamp: self.icons["Lamp"],
                 Directory: self.icons["Object Group"],
                 Link: self.icons["Link"]}
     
     colorDict = {Mesh: CBrush("#e2ffd9"), # light green
                  Tex: CBrush("#eadcff"), # light blue
                  Model: CBrush("#b2fffd"), # light cyan
-                 Light: CBrush("#ffffc5") # light yellow
+                 Lamp: CBrush("#ffffc5") # light yellow
                  }
 
     ObjList.iconDict = ObjNode.iconDict = iconDict
@@ -747,6 +724,7 @@ class MainApp(QMainWindow):
     file = bar.addMenu("&File")
     self.fileMenu_new = QAction(self.icons["New"], "&New")
     self.fileMenu_open = QAction(self.icons["Open"], "&Open...")
+    self.fileMenu_openhere = QAction(self.icons["Open"], "Open &here...")
     self.fileMenu_save = QAction(self.icons["Save"], "&Save")
     self.fileMenu_saveas = QAction(self.icons["Save"], "Save &as...")
     self.fileMenu_exportimage = QAction(self.icons["Image File"], "&Export Image")
@@ -754,6 +732,7 @@ class MainApp(QMainWindow):
     self.fileMenu_loadtextures = QAction(self.icons["Texture"], "Load &Textures")
     file.addAction(self.fileMenu_new)
     file.addAction(self.fileMenu_open)
+    file.addAction(self.fileMenu_openhere)
     file.addSeparator()
     file.addAction(self.fileMenu_save)
     file.addAction(self.fileMenu_saveas)
@@ -762,13 +741,16 @@ class MainApp(QMainWindow):
     file.addAction(self.fileMenu_loadtextures)
     file.addSeparator()
     file.addAction(self.fileMenu_exportimage)
+    asset = bar.addMenu("&Asset")
+    self.assetMenu_makebulb = QAction(self.icons["Bulb"], "Make &Bulb")
+    asset.addAction(self.assetMenu_makebulb)
     scene = bar.addMenu("&Scene")
     self.sceneMenu_makemodels = QAction(self.icons["Model"], "Make &Models")
-    self.sceneMenu_makelights = QAction(self.icons["Light"], "Make &Lights")
+    self.sceneMenu_makelamps = QAction(self.icons["Lamp"], "Make &Lamps")
     self.sceneMenu_makegroups = QAction(self.icons["Object Group"], "Make &Groups")
     self.sceneMenu_quickgroup = QAction(self.icons["Object Group"], "Make Group &Here")
     scene.addAction(self.sceneMenu_makemodels)
-    scene.addAction(self.sceneMenu_makelights)
+    scene.addAction(self.sceneMenu_makelamps)
     scene.addAction(self.sceneMenu_makegroups)
     scene.addAction(self.sceneMenu_quickgroup)
     view = bar.addMenu("&View")
@@ -790,16 +772,18 @@ class MainApp(QMainWindow):
     self.env.setProperty("class", "BigTabs")
     self.meshList = ObjList(self)
     self.texList = ObjList(self)
+    self.bulbList = ObjList(self)
     self.modelList = ObjList(self)
-    self.lightList = ObjList(self)
+    self.lampList = ObjList(self)
     self.rendTree = ObjTree(self)
     self.rendTree.setHeaderLabels(["Name", "Type", "Visible?"])
     self.env.addTab(self.meshList, self.icons["Mesh"], "")
     self.env.addTab(self.texList, self.icons["Texture"], "")
+    self.env.addTab(self.bulbList, self.icons["Bulb"], "")
     self.modelList.hide()
-    self.lightList.hide()
+    self.lampList.hide()
 ##    self.env.addTab(self.modelList, self.icons["Model"], "")
-##    self.env.addTab(self.lightList, self.icons["Light"], "")
+##    self.env.addTab(self.lampList, self.icons["Lamp"], "")
     self.env.addTab(self.rendTree, self.icons["3D Scene"], "")
     self.envPane.setWidget(self.env)
     self.envPane.setFloating(False)
@@ -847,13 +831,15 @@ class MainApp(QMainWindow):
 
     self.fileMenu_new.triggered.connect(lambda: self.newProject(base=True))
     self.fileMenu_open.triggered.connect(self.openProject)
+    self.fileMenu_openhere.triggered.connect(self.openhereProject)
     self.fileMenu_save.triggered.connect(self.saveProject)
     self.fileMenu_saveas.triggered.connect(self.saveasProject)
     self.fileMenu_exportimage.triggered.connect(self.exportImage)
     self.fileMenu_loadmeshes.triggered.connect(self.loadMeshes)
     self.fileMenu_loadtextures.triggered.connect(self.loadTextures)
+    self.assetMenu_makebulb.triggered.connect(self.makeBulb)
     self.sceneMenu_makemodels.triggered.connect(self.makeModels)
-    self.sceneMenu_makelights.triggered.connect(self.makeLights)
+    self.sceneMenu_makelamps.triggered.connect(self.makeLamps)
     self.sceneMenu_makegroups.triggered.connect(self.makeGroups)
     self.sceneMenu_quickgroup.triggered.connect(self.quickGroup)
     self.viewMenu_env.triggered.connect(self.curryTogglePane(self.envPane))
@@ -869,14 +855,16 @@ class MainApp(QMainWindow):
       qaction.setShortcut(QKeySequence(keySeq))
     quickShortcut("Ctrl+N", self.fileMenu_new)
     quickShortcut("Ctrl+O", self.fileMenu_open)
+    quickShortcut("Ctrl+Shift+O", self.fileMenu_openhere)
     quickShortcut("Ctrl+S", self.fileMenu_save)
     quickShortcut("Ctrl+Shift+S", self.fileMenu_saveas)
     quickShortcut("Ctrl+E", self.fileMenu_exportimage)
     quickShortcut("Ctrl+M", self.fileMenu_loadmeshes)
     quickShortcut("Ctrl+T", self.fileMenu_loadtextures)
+    quickShortcut("Ctrl+B", self.assetMenu_makebulb)
 
     quickShortcut("Ctrl+Shift+M", self.sceneMenu_makemodels)
-    quickShortcut("Ctrl+Shift+L", self.sceneMenu_makelights)
+    quickShortcut("Ctrl+Shift+L", self.sceneMenu_makelamps)
     quickShortcut("Ctrl+Shift+G", self.sceneMenu_makegroups)
     quickShortcut("Ctrl+G", self.sceneMenu_quickgroup)
 
@@ -944,7 +932,7 @@ class MainApp(QMainWindow):
     self.meshList.clear()
     self.texList.clear()
     self.modelList.clear()
-    self.lightList.clear()
+    self.lampList.clear()
     self.rendTree.clear()
 
   def addEnvObj(self, envobj, directory=None):
@@ -953,8 +941,9 @@ class MainApp(QMainWindow):
       self.rendTree.add(envobj, directory)
     QListDict = {Mesh: self.meshList,
                  Tex: self.texList,
+                 Bulb: self.bulbList,
                  Model: self.modelList,
-                 Light: self.lightList}
+                 Lamp: self.lampList}
     if type(envobj) in QListDict:
       L = QListDict[type(envobj)]
       L.add(envobj)
@@ -983,6 +972,8 @@ class MainApp(QMainWindow):
     self.clearLists()
     self.R.new()
     if base:
+      B = Bulb(name="Main Bulb")
+      self.add(Lamp(B, name="Main Lamp"))
       self.add(Directory(name="Main"))
     self.select(None)
     engine.monoselected = None
@@ -1031,11 +1022,25 @@ class MainApp(QMainWindow):
     fd.setNameFilters(["3-D Project (*.3dproj)", "Any File (*.*)"])
     if fd.exec_():
       fn = fd.selectedFiles()[0]
+      self.newProject(silent=True)
+      self.load(fn)
+
+  def openhereProject(self):
+    '''Prompt to add project to current working group'''
+    fd = QFileDialog()
+    fd.setWindowTitle("Open Here")
+    fd.setAcceptMode(QFileDialog.AcceptOpen)
+    fd.setFileMode(QFileDialog.ExistingFile)
+    fd.setNameFilters(["3-D Project (*.3dproj)", "Any File (*.*)"])
+    if fd.exec_():
+      fn = fd.selectedFiles()[0]
+      G = Directory(name=shortfn(fn))
+      self.add(G)
+      self.select(G)
       self.load(fn)
 
   def load(self, fn):
     '''Load project from filename fn'''
-    self.newProject(silent=True)
     try:
       self.S.load(fn)
     except IOError as e:
@@ -1051,7 +1056,17 @@ class MainApp(QMainWindow):
     '''Attempt to restore project from previous session'''
     if self.S.canRestore() and YNPrompt(self, "Restore", "Restore previous session?"):
       try:
+        self.newProject(silent=True)
         self.S.load_appdata()
+##        R = Bulb(color=(1.0, 0.0, 0.0), power=10.0)
+##        self.add(R)
+##        G = Bulb(color=(0.0, 1.0, 0.0), power=10.0)
+##        self.add(G)
+##        B = Bulb(color=(0.0, 0.0, 1.0), power=10.0)
+##        self.add(B)
+##        self.add(Lamp(R, pos=Point(0.0, 0.0, 0.0)))
+##        self.add(Lamp(G, pos=Point(-1.0, 0.0, 0.0)))
+##        self.add(Lamp(B, pos=Point(-0.5, 0.0, sqrt(3)/2)))
       except:
         self.logEntry("Error", "Unable to restore previous session.")
       else:
@@ -1079,6 +1094,12 @@ class MainApp(QMainWindow):
     if fd.exec_():
       for fn in fd.selectedFiles():
         self.loadAssetFile(fn)
+
+  def makeBulb(self):
+    B = Bulb()
+    # Modify bulb with modal: TODO
+    self.add(B)
+    self.logEntry("Success", "Made bulb.")
 
   def loadAssetFile(self, fn):
     ext = os.path.splitext(fn)[1]
@@ -1112,10 +1133,8 @@ class MainApp(QMainWindow):
     layout.addWidget(dimBox, 0,0, 1,1)
     dimLayout = QFormLayout()
     dimBox.setLayout(dimLayout)
-    width = QSpinBox(minimum=1, maximum=10000)
-    width.setValue(current_dims[0])
-    height = QSpinBox(minimum=1, maximum=10000)
-    height.setValue(current_dims[1])
+    width = QSpinBox(minimum=1, maximum=10000, value=current_dims[0])
+    height = QSpinBox(minimum=1, maximum=10000, value=current_dims[1])
     dimLayout.addRow("Width", width)
     dimLayout.addRow("Height", height)
 
@@ -1129,21 +1148,10 @@ class MainApp(QMainWindow):
       self.gl.resize(w, h) # It won't show up anyway.
       self.gl.paintGL()
       pixels = glReadPixels(0,0, w,h, GL_RGBA, GL_UNSIGNED_BYTE)
+      im = self.gl.grabFrameBuffer()
       self.gl.resize(*current_dims)
       self.gl.paintGL()
-      # left-to-right, bottom-to-top 2-D byte data
-      # ---3--->
-      # ---2--->
-      # ---1--->
-      # ---0--->
-      # needs to be flipped top to bottom at the end to
-      # conform to PIL's standard:
-      # ---0--->
-      # ---1--->
-      # ---2--->
-      # ---3--->
-
-      im = Image.frombytes("RGBA", (w, h), pixels).transpose(Image.FLIP_TOP_BOTTOM)
+      
       fd = QFileDialog()
       fd.setAcceptMode(QFileDialog.AcceptSave)
       fd.setFileMode(QFileDialog.AnyFile)
@@ -1162,7 +1170,6 @@ class MainApp(QMainWindow):
 
   def makeModels(self):
     '''Shows modal for making models'''
-    print(0)
     M = Modal(self)
     M.setWindowTitle("Make Models")
     layout = QGridLayout()
@@ -1252,9 +1259,73 @@ class MainApp(QMainWindow):
     testValid()
     M.exec_() # show the modal
 
-  def makeLights(self):
-    '''Shows modal for making lights--NOT IMPLEMENTED'''
-    pass
+  def makeLamps(self):
+    '''Shows modal for making lamps'''
+    M = Modal(self)
+    M.setWindowTitle("Make Lamps")
+    layout = QGridLayout()
+    M.setLayout(layout)
+
+    assetBox = QGroupBox("Assets")
+    layout.addWidget(assetBox, 0,0, 2,1)
+    assetLayout = QFormLayout()
+    assetBox.setLayout(assetLayout)
+    bList = copyObjList(self.bulbList)
+    assetLayout.addRow("Bulb", bList)
+
+    poseBox = QGroupBox("Pose")
+    layout.addWidget(poseBox, 0,1, 1,1)
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    basepos, _ = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basex, basey, basez = basepos
+    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
+    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
+    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+
+    custBox = QGroupBox("Customization")
+    layout.addWidget(custBox, 1,1, 1,1)
+    custLayout = QFormLayout()
+    custBox.setLayout(custLayout)
+    name = QLineEdit(text="lamp0")
+    custLayout.addRow("Name", name)
+
+    lastx = x.value()
+    lasty = y.value()
+    lastz = z.value()
+
+    def tryMakeLamp():
+      nonlocal lastx, lasty, lastz
+      b = bList.selectedItems()
+      if not len(b):
+        return
+      bulb = b[0].obj
+      xv, yv, zv = x.value(), y.value(), z.value()
+      lamp = Lamp(bulb, pos=Point(xv, yv, zv), name=name.text())
+      self.add(lamp)
+      self.select(lamp)
+      dx = xv - lastx
+      dy = yv - lasty
+      dz = zv - lastz
+      x.setValue(xv+dx)
+      y.setValue(yv+dy)
+      z.setValue(zv+dz)
+      lastx, lasty, lastz = xv, yv, zv
+      self.logEntry("Success", "Made lamp.")
+
+    make = QPushButton("Make Lamp", icon=self.icons["Ok"])
+    make.clicked.connect(tryMakeLamp)
+    layout.addWidget(make, 2,0, 1,2)
+    
+    def testValid():
+      make.setEnabled(len(bList.selectedItems()))
+
+    bList.itemClicked.connect(testValid)
+    testValid()
+    M.exec_()
 
   def makeGroups(self):
     '''Shows modal for making groups'''
@@ -1387,17 +1458,62 @@ class MainApp(QMainWindow):
     heading = QLabel("Texture", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.texEdit_name = QLineEdit()
     thumbnail = self.texEdit_thumbnail = QLabel()
+    thumbnail.setAlignment(Qt.AlignCenter)
+    diffuse = self.texEdit_diffuse = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
+    specular = self.texEdit_specular = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
+    fresnel = self.texEdit_fresnel = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
+    shininess = self.texEdit_shininess = QDoubleSpinBox(minimum=1, maximum=2147483647)
+    for setting in diffuse, specular, fresnel, shininess:
+      setting.valueChanged.connect(self.updateSelected)
     change = QPushButton(text="Change Image", icon=self.icons["File"])
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     name.textChanged.connect(self.updateSelected)
+    
+    matBox = QGroupBox("Material")
+    matLayout = QFormLayout()
+    matBox.setLayout(matLayout)
+    matLayout.addRow("Diffuse", diffuse)
+    matLayout.addRow("Specular", specular)
+    matLayout.addRow("Fresnel", fresnel)
+    matLayout.addRow("Shininess", shininess)
+    
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
     L.addWidget(heading)
     L.addWidget(name)
     L.addWidget(thumbnail)
+    L.addWidget(matBox)
     L.addWidget(change)
     L.addWidget(delete)
     W = self.texEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===BULB===
+    L = QVBoxLayout()
+    heading = QLabel("Bulb", font=self.fonts["heading"], alignment=Qt.AlignCenter)
+    name = self.bulbEdit_name = QLineEdit()
+    color = self.bulbEdit_color = QLineEdit(readOnly=True)
+    power = self.bulbEdit_power = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    change = QPushButton(text="Change Color", icon=self.icons["Color"])
+    delete = QPushButton(text="Delete", icon=self.icons["Delete"])
+    name.textChanged.connect(self.updateSelected)
+    power.valueChanged.connect(self.updateSelected)
+    change.clicked.connect(self.reinitSelected)
+    delete.clicked.connect(self.deleteSelected)
+
+    filamentBox = QGroupBox("Filament")
+    filamentLayout = QFormLayout()
+    filamentBox.setLayout(filamentLayout)
+    filamentLayout.addRow("Color", color)
+    filamentLayout.addRow("Power", power)
+    
+    L.addWidget(heading)
+    L.addWidget(name)
+    L.addWidget(filamentBox)
+    L.addWidget(change)
+    L.addWidget(delete)
+    W = self.bulbEdit = QWidget()
     W.setLayout(L)
     self.selEdit.addWidget(W)
 
@@ -1495,6 +1611,55 @@ class MainApp(QMainWindow):
     visible.stateChanged.connect(self.updateSelected)
 
     W = self.modelEdit = QWidget()
+    W.setLayout(L)
+    self.selEdit.addWidget(W)
+
+    #===LAMP===
+    L = QVBoxLayout()
+    heading = QLabel("Lamp", font=self.fonts["heading"], alignment=Qt.AlignCenter)
+    name = self.lampEdit_name = QLineEdit()
+    change = self.lampEdit_change = QPushButton(text="Change Bulb", icon=self.icons["Bulb"])
+    delete = self.lampEdit_delete = QPushButton(text="Delete", icon=self.icons["Delete"])
+    x = self.lampEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    y = self.lampEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    z = self.lampEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    visible = self.lampEdit_visible = QCheckBox(text="Visible", tristate=False)
+    bulb = self.lampEdit_bulb = QLineEdit(readOnly=True)
+
+    poseBox = QGroupBox("Pose")
+    poseLayout = QFormLayout()
+    poseBox.setLayout(poseLayout)
+    poseLayout.addRow("x", x)
+    poseLayout.addRow("y", y)
+    poseLayout.addRow("z", z)
+
+    sceneBox = QGroupBox("Scene")
+    sceneLayout = QFormLayout()
+    sceneBox.setLayout(sceneLayout)
+    sceneLayout.addWidget(visible)
+
+    assetBox = QGroupBox("Assets")
+    assetLayout = QFormLayout()
+    assetBox.setLayout(assetLayout)
+    assetLayout.addRow("Bulb", bulb)
+
+    L.addWidget(heading)
+    L.addWidget(name)
+    L.addWidget(poseBox)
+    L.addWidget(sceneBox)
+    L.addWidget(assetBox)
+    L.addWidget(change)
+    L.addWidget(delete)
+
+    name.textChanged.connect(self.updateSelected)
+    for setting in x, y, z:
+      setting.valueChanged.connect(self.updateSelected)
+    visible.stateChanged.connect(self.updateSelected)
+
+    change.clicked.connect(self.reinitSelected)
+    delete.clicked.connect(self.deleteSelected)
+
+    W = self.lampEdit = QWidget()
     W.setLayout(L)
     self.selEdit.addWidget(W)
 
@@ -1638,7 +1803,6 @@ class MainApp(QMainWindow):
   def reinitSelected(self):
     '''Prompts user to reinitialise the selected object from different files/assets'''
     S = engine.monoselected
-    name = S.name
     if type(S) is Mesh:
       ID = S.ID
       fd = QFileDialog()
@@ -1649,9 +1813,10 @@ class MainApp(QMainWindow):
         fn = fd.selectedFiles()[0]
         try:
           newMesh = Mesh(fn)
+          newMesh.cullbackface = S.cullbackface
+          newMesh.name = S.name
           self.R.delete(S)
           S.__dict__ = newMesh.__dict__
-          S.name = name
           self.R.add(S)
         except:
           self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
@@ -1672,14 +1837,19 @@ class MainApp(QMainWindow):
         fn = fd.selectedFiles()[0]
         try:
           newTex = Tex(fn)
+          newTex.name = S.name
           self.R.delete(S)
           S.__dict__ = newTex.__dict__
-          S.name = name
           self.R.add(S)
         except:
           self.logEntry("Error", "Bad image file: %s"%shortfn(fn))
         else:
           self.logEntry("Success", "Loaded texture from %s"%shortfn(fn))
+
+    elif type(S) is Bulb:
+      M = QColorDialog(self)
+      C = M.getColor()
+      S.color = (C.redF(), C.greenF(), C.blueF())
 
     elif type(S) is Model:
       M = Modal(self)
@@ -1725,14 +1895,15 @@ class MainApp(QMainWindow):
     self.update()
 
   def delete(self, obj):
-    '''Deletes object (Mesh, Tex, Model, or Light) from user environment, ui list, and file cache and deselects it'''
+    '''Deletes object (Mesh, Tex, Model, or Lamp) from user environment, ui list, and file cache and deselects it'''
     # Remove from list
     if isinstance(obj, Renderable):
       self.rendTree.delete(obj)
     listDict = {Mesh: self.meshList,
                 Tex: self.texList,
+                Bulb: self.bulbList,
                 Model: self.modelList,
-                Light: self.lightList}
+                Lamp: self.lampList}
     if type(obj) in listDict:
       l = listDict[type(obj)]
       l.take(obj)
@@ -1811,12 +1982,21 @@ class MainApp(QMainWindow):
     S = engine.monoselected
     if type(S) is Tex:
       S.name = self.texEdit_name.text()
+      S.diffuse = self.texEdit_diffuse.value()/100
+      S.specular = self.texEdit_specular.value()/100
+      S.fresnel = self.texEdit_fresnel.value()/100
+      S.shininess = self.texEdit_shininess.value()
       self.texList.update()
       
     elif type(S) is Mesh:
       S.name = self.meshEdit_name.text()
       S.cullbackface = self.meshEdit_cullbackface.isChecked()
       self.meshList.update()
+
+    elif type(S) is Bulb:
+      S.name = self.bulbEdit_name.text()
+      S.power = self.bulbEdit_power.value()
+      self.bulbList.update()
       
     elif type(S) is Model:
       S.name = self.modelEdit_name.text()
@@ -1829,6 +2009,15 @@ class MainApp(QMainWindow):
       S.scale = self.modelEdit_scale.value()
       S.visible = self.modelEdit_visible.isChecked()
       self.modelList.update()
+      self.rendTree.update()
+
+    elif type(S) is Lamp:
+      S.name = self.lampEdit_name.text()
+      S.pos = Point(self.lampEdit_x.value(),
+                    self.lampEdit_y.value(),
+                    self.lampEdit_z.value())
+      S.visible = self.lampEdit_visible.isChecked()
+      self.lampList.update()
       self.rendTree.update()
 
     elif type(S) is Directory:
@@ -1861,7 +2050,9 @@ class MainApp(QMainWindow):
     '''Updates the stacked widget in the "Selected" tab of the edit pane'''
     widgetDict = {Mesh: self.meshEdit,
                   Tex: self.texEdit,
+                  Bulb: self.bulbEdit,
                   Model: self.modelEdit,
+                  Lamp: self.lampEdit,
                   Directory: self.dirEdit,
                   Link: self.linkEdit
                   }
@@ -1876,11 +2067,22 @@ class MainApp(QMainWindow):
     self.switchSelEdit(type(S))
     if type(S) is Tex:
       name = S.name
+      diffuse = int(100*S.diffuse)
+      specular = int(100*S.specular)
+      fresnel = int(100*S.fresnel)
+      shininess = S.shininess
       qpm = QPixmap.fromImage(S.thumbnailQt)
       self.texEdit_thumbnail.setPixmap(qpm)
       for setting, text in [(self.texEdit_name, name)]:
         setting.blockSignals(True)
         setting.setText(text)
+        setting.blockSignals(False)
+      for setting, val in [(self.texEdit_diffuse, diffuse),
+                           (self.texEdit_specular, specular),
+                           (self.texEdit_fresnel, fresnel),
+                           (self.texEdit_shininess, shininess)]:
+        setting.blockSignals(True)
+        setting.setValue(val)
         setting.blockSignals(False)
       self.texEdit.update()
         
@@ -1908,6 +2110,22 @@ class MainApp(QMainWindow):
         checkbox.blockSignals(False)
 
       self.meshEdit.update()
+
+    elif type(S) is Bulb:
+      name = S.name
+      r,g,b = S.color
+      power = S.power
+
+      for setting, text in [(self.bulbEdit_name, name),
+                            (self.bulbEdit_color, rrggbb(r,g,b))]:
+        setting.blockSignals(True)
+        setting.setText(text)
+        setting.blockSignals(False)
+
+      for setting, var in [(self.bulbEdit_power, power)]:
+        setting.blockSignals(True)
+        setting.setValue(var)
+        setting.blockSignals(False)
       
     elif type(S) is Model:
       name = S.name
@@ -1947,6 +2165,30 @@ class MainApp(QMainWindow):
         checkbox.blockSignals(False)
 
       self.modelEdit.update()
+
+    elif type(S) is Lamp:
+      name = S.name
+      x, y, z = S.pos
+      visible = S.visible
+      bulb = S.bulb.name
+
+      for setting, text in [(self.lampEdit_name, name),
+                            (self.lampEdit_bulb, bulb)]:
+        setting.blockSignals(True)
+        setting.setText(text)
+        setting.blockSignals(False)
+
+      for setting, var in [(self.lampEdit_x, x),
+                           (self.lampEdit_y, y),
+                           (self.lampEdit_z, z)]:
+        setting.blockSignals(True)
+        setting.setValue(var)
+        setting.blockSignals(False)
+
+      for checkbox, state in [(self.lampEdit_visible, visible)]:
+        checkbox.blockSignals(True)
+        checkbox.setCheckState(state*2)
+        checkbox.blockSignals(False)
 
     elif type(S) is Directory:
       name = S.name

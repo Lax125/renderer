@@ -13,6 +13,7 @@ thanks edward344!
 '''
 from all_modules import *
 from appdata import datapath
+from shader import *
 
 def id_gen(start=1):
     '''Generator that yields consecutive numbers'''
@@ -58,27 +59,20 @@ def im2qim(im):
     return qim
 
 class Asset:
-    def __init__(self, filename, name="asset0"):
-        self._clear()
-        self.filename = filename
-        self.name = name
-        self._load()
+    '''An object expected to be used repeatedly among multiple renderables'''
+    name = "asset0"
 
-    def _clear(self):
-        pass
-
-    def _load(self):
-        pass
-
-    def delete(self):
-        pass
 
 class Tex(Asset):
     IDs = id_gen(1)
     texDict = dict()
-    def __init__(self, filename, name=None):
+    def __init__(self, filename, diffuse=1.0, specular=0.0, fresnel=0.0, shininess=10.0, name=None):
         self.ID = next(Tex.IDs)
         self._clear()
+        self.diffuse = diffuse
+        self.specular = specular
+        self.fresnel = fresnel
+        self.shininess = shininess
         self.filename = filename
         if name is None:
             name = os.path.basename(filename)
@@ -105,6 +99,10 @@ class Tex(Asset):
         self.texID = 0 # OpenGL's default texture, white
         self.filename = None
         self.name = None
+        self.diffuse = 0.0
+        self.specular = 0.0
+        self.fresnel = 0.0
+        self.shininess = 0.0
         del Tex.texDict[self.ID]
 
     def __copy__(self):
@@ -231,10 +229,6 @@ class Mesh(Asset):
             AB = tuple(Bn-An for An, Bn in zip(A, B))
             AC = tuple(Cn-An for An, Cn in zip(A, C))
             x, y, z = normal = np.cross(AC, AB)
-##            magnitude = (x**2 + y**2 + z**2)**0.5
-##            print("NORMAL")
-##            print(AB, AC)
-##            print(tuple(normal))
             self.normals.append(tuple(normal))
             normal_index = len(self.normals)-1
             for i, (v, vt, vn) in enumerate(face):
@@ -301,50 +295,19 @@ class Mesh(Asset):
 
     def __repr__(self):
         return "Mesh(%s)"%self.filename
-    
-
-    def _render_face(self, face):
-        '''DEPRECATED: render single face'''
-        normalid = face[0][2]
-        if normalid:
-            normal = self.normals[normalid] 
-            glNormal3fv(normal)
-        for i, v in enumerate(face):
-            glTexCoord2fv(self.texcoords[v[1]])
-            glVertex3fv(self.vertices[v[0]])
-
-    def _render_edge(self, edge):
-        '''DEPRECATED: render single edge'''
-        pA, pB = self.vertices[edge[0]], self.vertices[edge[1]]
-        glVertex3fv(pA)
-        glVertex3fv(pB)
             
     def render(self, tex): # GPU-powered rendering!
         '''Render mesh into buffers with texture from textureID.'''
         glEnable(GL_TEXTURE_2D)
-        glEnable(GL_FOG)
         if self.cullbackface:
             glEnable(GL_CULL_FACE)
+        glActiveTexture(GL_TEXTURE0)
         glBindTexture(GL_TEXTURE_2D, tex.texID)
-
-##        #====IMMEDIATE (SLOW, DEPRECATED)====
-##        # TRIANGLES
-##        glBegin(GL_TRIANGLES)
-##        for face in (self.tri_faces):
-##            self._render_face(face)
-##        glEnd()
-##
-##        # QUADRILATERALS
-##        glBegin(GL_QUADS)
-##        for face in (self.quad_faces):
-##            self._render_face(face)
-##        glEnd()
-##
-##        # N>4 POLYGONS
-##        for face in (self.poly_faces):
-##            glBegin(GL_POLYGON)
-##            self._render_face(face)
-##            glEnd()
+        glUniform1i(Shader.current.uniformLocs["texture"], 0)
+        glUniform1f(Shader.current.uniformLocs["diffuse"], tex.diffuse)
+        glUniform1f(Shader.current.uniformLocs["specular"], tex.specular)
+        glUniform1f(Shader.current.uniformLocs["fresnel"], tex.fresnel)
+        glUniform1f(Shader.current.uniformLocs["shininess"], tex.shininess)
 
         #====VBO (STANDARD, GPU PIPELINE)====
         V, TC, N, TRI_I, _ = self.vbo_buffers
@@ -369,7 +332,6 @@ class Mesh(Asset):
         glDisableClientState(GL_VERTEX_ARRAY)
 
         glDisable(GL_TEXTURE_2D)
-        glDisable(GL_FOG)
         glDisable(GL_CULL_FACE)
 
     def render_wireframe(self):
@@ -395,3 +357,31 @@ class Mesh(Asset):
 
     def __deepcopy__(self, memo):
         return copy.copy(self)
+
+class Bulb(Asset):
+    IDs = id_gen()
+    bulbDict = dict()
+    def __init__(self, power=1.0, color=(1.0, 1.0, 1.0), name=None):
+        self.ID = next(Bulb.IDs)
+        self.power = power
+        self.color = color
+        if name is None:
+            name = "bulb0"
+        self.name = name
+        self._clear()
+
+    def _clear(self):
+        self.deleted = False
+
+    def delete(self):
+        self._clear()
+        self.deleted = True
+
+    def __copy__(self):
+        return Bulb(power=self.power, color=self.color, name=self.name)
+
+    def __deepcopy__(self, memo):
+        return copy.copy(self)
+
+    
+        
