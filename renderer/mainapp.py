@@ -61,6 +61,9 @@ POS_DELTAS = {Qt.Key_A: (-5, 0, 0),
 def keyModFlags():
   return QCoreApplication.instance().keyboardModifiers()
 
+def iconLabel(icon, size=(24, 24)):
+  return QLabel(pixmap=icon.pixmap(QSize(*size)))
+
 def copyObjList(ql):
   cql = QListWidget()
   for i in range(ql.count()):
@@ -1566,8 +1569,8 @@ class MainApp(QMainWindow):
     rz = self.modelEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     scale = self.modelEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
     visible = self.modelEdit_visible = QCheckBox(text="Visible", tristate=False)
-    mesh = self.modelEdit_mesh = QLineEdit(readOnly=True)
-    tex = self.modelEdit_tex = QLineEdit(readOnly=True)
+    mesh = self.modelEdit_mesh = QPushButton()
+    tex = self.modelEdit_tex = QPushButton()
     
     L.addWidget(heading)
     
@@ -1596,8 +1599,8 @@ class MainApp(QMainWindow):
     L.addWidget(assetBox)
     assetLayout = QFormLayout()
     assetBox.setLayout(assetLayout)
-    assetLayout.addRow("Mesh", mesh)
-    assetLayout.addRow("Texture", tex)
+    assetLayout.addRow(iconLabel(self.icons["Mesh"]), mesh)
+    assetLayout.addRow(iconLabel(self.icons["Texture"]), tex)
 
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
@@ -1607,6 +1610,16 @@ class MainApp(QMainWindow):
     for setting in [x,y,z, rx,ry,rz, scale]:
       setting.valueChanged.connect(self.updateSelected)
 
+    def selectMesh():
+      assert isinstance(engine.monoselected, Model)
+      self.select(engine.monoselected.mesh)
+    mesh.clicked.connect(selectMesh)
+
+    def selectTexture():
+      assert isinstance(engine.monoselected, Tex)
+      self.select(engine.monoselected.tex)
+    tex.clicked.connect(selectTexture)
+    
     visible.stateChanged.connect(self.updateSelected)
 
     W = self.modelEdit = QWidget()
@@ -1617,13 +1630,13 @@ class MainApp(QMainWindow):
     L = QVBoxLayout()
     heading = QLabel("Lamp", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.lampEdit_name = QLineEdit()
-    change = self.lampEdit_change = QPushButton(text="Change Assets", icon=self.icons["Bulb"])
+    change = self.lampEdit_change = QPushButton(text="Change Assets", icon=self.icons["Form"])
     delete = self.lampEdit_delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     x = self.lampEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.lampEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     z = self.lampEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     visible = self.lampEdit_visible = QCheckBox(text="Visible", tristate=False)
-    bulb = self.lampEdit_bulb = QLineEdit(readOnly=True)
+    bulb = self.lampEdit_bulb = QPushButton()
 
     poseBox = QGroupBox("Pose")
     poseLayout = QFormLayout()
@@ -1640,7 +1653,7 @@ class MainApp(QMainWindow):
     assetBox = QGroupBox("Assets")
     assetLayout = QFormLayout()
     assetBox.setLayout(assetLayout)
-    assetLayout.addRow("Bulb", bulb)
+    assetLayout.addRow(iconLabel(self.icons["Mesh"]), bulb)
 
     L.addWidget(heading)
     L.addWidget(name)
@@ -1654,6 +1667,11 @@ class MainApp(QMainWindow):
     for setting in x, y, z:
       setting.valueChanged.connect(self.updateSelected)
     visible.stateChanged.connect(self.updateSelected)
+    
+    def selectBulb():
+      assert isinstance(engine.monoselected, Lamp)
+      self.select(engine.monoselected.bulb)
+    bulb.clicked.connect(selectBulb)
 
     change.clicked.connect(self.reinitSelected)
     delete.clicked.connect(self.deleteSelected)
