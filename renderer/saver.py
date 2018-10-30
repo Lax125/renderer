@@ -207,7 +207,7 @@ class Saver:
         name, bulbIndex, x,y,z,rx,ry,rz, scale, visible\
           = castList([str, int, *[float]*6, float, int], args)
         new_lamp = Lamp(bulbs[bulbIndex],
-                        pos=Point(x,y,z), rot=(rx,ry,rz),
+                        pos=Point(x,y,z), rot=Rot(rx,ry,rz),
                         scale=scale, visible=visible,
                         name=name)
         self.app.add(new_lamp)

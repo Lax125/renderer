@@ -499,6 +499,14 @@ class Lamp(Renderable):
     glUniform3fv(Shader.current.uniformLocs["lPositions"], Lamp.i, Lamp.lPositions)
     glUniform3fv(Shader.current.uniformLocs["lColorPowers"], Lamp.i, Lamp.lColorPowers)
 
+  def update_bbox(self):
+    self.minPoint = Point(-1, -1, -1)
+    self.maxPoint = Point(1, 1, 1)
+    super().update_bbox()
+
+  def places_axes(self):
+    pass
+
 class Directory(Renderable):
   # Provides an OpenGL matrix transformation to put other Renderables in
   def __init__(self, rends=None, *args, **kwargs):

@@ -180,7 +180,6 @@ class glWidget(QGLWidget):
     
     count = 0
     dt = self.dt
-
     dr = [0.0, 0.0, 0.0]
     rotated = False
     for k, (drx, dry, drz) in ROT_DELTAS.items():
@@ -194,7 +193,7 @@ class glWidget(QGLWidget):
     if rotated:
       drx, dry, drz = dr
       if selRends and (keyModFlags() & Qt.ShiftModifier):
-        self.parent.R.changeRendRot(engine.monoselected, dt*drx, dt*dry, dt*drz)
+        self.parent.R.changeRendRot(sel, dt*drx, dt*dry, dt*drz)
       else:
         self.parent.R.changeCameraRot(dt*drx, dt*dry, dt*drz)
 
@@ -1618,7 +1617,7 @@ class MainApp(QMainWindow):
     L = QVBoxLayout()
     heading = QLabel("Lamp", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.lampEdit_name = QLineEdit()
-    change = self.lampEdit_change = QPushButton(text="Change Bulb", icon=self.icons["Bulb"])
+    change = self.lampEdit_change = QPushButton(text="Change Assets", icon=self.icons["Bulb"])
     delete = self.lampEdit_delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     x = self.lampEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
     y = self.lampEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
@@ -1884,6 +1883,32 @@ class MainApp(QMainWindow):
       
       mList.itemClicked.connect(tryChangeModel)
       tList.itemClicked.connect(tryChangeModel)
+      M.exec_()
+
+    elif type(S) is Lamp:
+      M = Modal(self)
+      M.setWindowTitle("Change Lamp")
+      layout = QGridLayout()
+      M.setLayout(layout)
+
+      assetBox = QGroupBox("Assets")
+      layout.addWidget(assetBox)
+      assetLayout = QFormLayout()
+      assetBox.setLayout(assetLayout)
+      bList = copyObjList(self.bulbList)
+      assetLayout.addRow("Bulb", bList)
+
+      if not S.bulb.deleted:
+        bList.setCurrentRow(bList.find(S.bulb))
+
+      def tryChangeLamp():
+        b = bList.selectedItems()
+        if not len(b):
+          return
+        S.bulb = b[0].obj
+        self.update()
+
+      bList.itemClicked.connect(tryChangeLamp)
       M.exec_()
 
     self.updateSelEdit()

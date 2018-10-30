@@ -68,7 +68,9 @@ void main()
     // R: frag-->reflectdir
     vec3 R = normalize(reflect(-L, N)); // incident vector I = -L
     // Test if it's on the same side
-    float a = dot3(N, L);
+    float a;
+    if (gl_FrontFacing) a = dot3(N, L);
+    else a = dot3(-N, L);
 
     // Calculate diffuse intensity
     float Idiff = diffuse * max(a, 0.0) / distSquared;
