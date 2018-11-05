@@ -106,7 +106,7 @@ class Tex(Asset):
         del Tex.texDict[self.ID]
 
     def __copy__(self):
-        return Tex(self.tmpFilename, name=self.name)
+        return Tex(self.tmpFilename, diffuse=self.diffuse, specular=self.specular, fresnel=self.fresnel, shininess=self.shininess,name=self.name)
 
     def __deepcopy__(self, memo):
         return copy.copy(self)
@@ -363,19 +363,22 @@ class Bulb(Asset):
     bulbDict = dict()
     def __init__(self, power=1.0, color=(1.0, 1.0, 1.0), name=None):
         self.ID = next(Bulb.IDs)
+        self._clear()
         self.power = power
         self.color = color
         if name is None:
             name = "bulb0"
         self.name = name
-        self._clear()
 
     def _clear(self):
         self.deleted = False
+        self.power = 0.0
+        self.color = (0.0, 0.0, 0.0)
 
     def delete(self):
         self._clear()
         self.deleted = True
+        self.name = None
 
     def __copy__(self):
         return Bulb(power=self.power, color=self.color, name=self.name)

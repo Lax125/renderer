@@ -57,6 +57,12 @@ class Saver:
     os.mkdir(datapath("tmp/assets/textures"))
     with dataopen("tmp/blueprint.dat", "w") as f:
       f.write("# 3DBP\n")
+
+      # first, write ambient light data
+      R,G,B = self.app.UE.scene.ambientColor
+      power = self.app.UE.scene.ambientPower
+      f.write("AMBIENT %s %s %s %s\n"%(R,G,B, power))
+      
       # Placement indicies conform to Wavefront's 1-indexing
       # because having two competing standards is confusing
       meshPlacements = id_gen(1) # yields 1, 2, 3, ...
@@ -156,7 +162,7 @@ class Saver:
     directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
     dirStack = [None]
     for line in dataopen("tmp/blueprint.dat", "r"):
-      print(line, end="")
+##      print(line, end="")
       words = shlex.split(line)
       if not words:
         continue
@@ -164,6 +170,11 @@ class Saver:
       
       if command == "#":
         pass
+
+      elif command == "AMBIENT":
+        R,G,B, power = castList([*[float]*3, float], args)
+        self.app.UE.scene.ambientColor = R,G,B
+        self.app.UE.scene.ambientPower = power
       
       elif command == "m": # mesh
         name, ID, cullbackface = castList([str, int, int], args)

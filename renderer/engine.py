@@ -18,14 +18,20 @@ from all_modules import *
 #   - LOADING SHADERS
 from rotpoint import Point, Rot
 from shader import *
+from asset import id_gen
 
 # FOR LOGGING
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
 logger = logging.getLogger('engine')
 
+NUM_MODES = 2
+FLAT = 0
+FULL = 1
+renderingMode = FULL
 selected = set()
 monoselected = None
+highlighted = None
 clipboard = None
 camPos = None
 camTrueFovy = None
@@ -38,12 +44,23 @@ def mix_permute(A, B):
     yield l+[A[-1]]
     yield l+[B[-1]]
 
+def normalize(xyz):
+  magnitude = np.linalg.norm(xyz)
+  return xyz/magnitude
+
 def glGetModelview(): # convenience: get modelview matrix
   return glGetFloatv(GL_MODELVIEW_MATRIX)
 
 def glGetModelviewPos():
   M = glGetModelview()
   return np.array([M[3,0], M[3,1], M[3,2]])
+
+def glGetModelviewAxes():
+  M = glGetModelview()
+  xAxis = np.array([M[0,0], M[0,1], M[0,2]])
+  yAxis = np.array([M[1,0], M[1,1], M[1,2]])
+  zAxis = np.array([M[2,0], M[2,1], M[2,2]])
+  return xAxis, yAxis, zAxis
 
 def glApplyRot(rot, invert=False):
   rx, ry, rz = rot
@@ -60,15 +77,87 @@ def glGetScale():
   A = np.array(glGetModelview())
   return (A[0,0]**2 + A[1,0]**2 + A[2,0]**2)**0.5
 
+def gluGlobe():
+  glMatrixMode(GL_MODELVIEW)
+  glPushMatrix()
+  glLoadIdentity()
+  PLAIN_SHADER.use()
+  glColor4f(0.0, 0.0, 0.0, 0.0)
+  glLineWidth(1)
+  glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+  glDepthMask(False)
+  glRotated(90, 1,0,0)
+  gluSphere(gluNewQuadric(), 1, 24, 12)
+  glRotated(-90, 1,0,0)
+  glDepthMask(True)
+  glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+  glPopMatrix()
+
 def gluCamera(camera, aspect):
   glMatrixMode(GL_PROJECTION)
   glLoadIdentity()
   defacto_fovy = degrees(atan(tan(radians(camera.fovy)/2)/camera.zoom))*2
   gluPerspective(defacto_fovy, aspect, *camera.zRange)
-  gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
   glMatrixMode(GL_MODELVIEW)
   glLoadIdentity()
+  gluLookAt(0,0,0, *camera.rot.get_forward_vector(invert=True), *camera.rot.get_upward_vector(invert=True))
   glTranslatef(*-camera.pos)
+
+def testRayBBIntersection(rayV, BBmin, BBmax):
+  '''Test if a ray from modelview origin intersects a bounding box in current modelview matrix. Returns the distance if they instersect and None they do not.'''
+  ## credit: http://www.opengl-tutorial.org/miscellaneous/clicking-on-objects/picking-with-custom-ray-obb-function/
+  epsilon = abs(3*0.1 - 0.1 - 0.1 - 0.1)
+  tMin = 0.0 # the length of the ray if it were cut off by the closest side of the BBox
+  tMax = 10000000.0 # the length of the ray if it were cut off by the farthest side of the BBox
+  dPos = glGetModelviewPos()
+
+  # TEST ALL AXES
+  xAxis, yAxis, zAxis = glGetModelviewAxes()
+  
+  # x
+  e = np.dot(xAxis, dPos)
+  f = np.dot(rayV, xAxis)
+  if f == 0.0:
+    f = epsilon
+  t1 = (e+BBmin[0])/f
+  t2 = (e+BBmax[0])/f
+  if t1 > t2:
+    t1, t2 = t2, t1
+  tMin = max(tMin, t1)
+  tMax = min(tMax, t2)
+  if tMax < tMin:
+    return None # no intersection
+
+  # y
+  e = np.dot(yAxis, dPos)
+  f = np.dot(rayV, yAxis)
+  if f == 0.0:
+    f = epsilon
+  t1 = (e+BBmin[1])/f
+  t2 = (e+BBmax[1])/f
+  if t1 > t2:
+    t1, t2 = t2, t1
+  tMin = max(tMin, t1)
+  tMax = min(tMax, t2)
+  if tMax < tMin:
+    return None # no intersection
+
+  # z
+  e = np.dot(zAxis, dPos)
+  f = np.dot(rayV, zAxis)
+  if f == 0.0:
+    f = epsilon
+  t1 = (e+BBmin[2])/f
+  t2 = (e+BBmax[2])/f
+  if t1 > t2:
+    t1, t2 = t2, t1
+  tMin = max(tMin, t1)
+  tMax = min(tMax, t2)
+  if tMax < tMin:
+    return None # no intersection
+
+  return tMin
+  
 
 class Camera:
   '''Describes a camera in 3-D position and rotation'''
@@ -92,8 +181,12 @@ class Camera:
 
 class Renderable:
   '''Base class for renderable objects: Models, Lamps'''
+##  IDs = id_gen(1)
+##  rendDict = dict()
   
   def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, visible=True, name="renderable0"):
+##    self.ID = next(Renderable.IDs)
+##    Renderable.rendDict[self.ID] = self
     self.parent = None
     self.pos = pos
     self.rot = rot
@@ -135,10 +228,18 @@ class Renderable:
   def placeMonosel(self): # place extra stuff because i am THE selected
     pass
 
+  def placeHighlight(self):
+    self.placeBBox()
+    self.placeSel()
+    self.placeOrigin()
+
   def placeBBox(self):
     PLAIN_SHADER.use()
     glEnable(GL_BLEND)
-    glColor4f(1.0, 1.0, 1.0, 0.75)
+    if renderingMode == FULL:
+      glColor4f(1.0, 1.0, 1.0, 0.75)
+    elif renderingMode == FLAT:
+      glColor4f(0.0, 0.0, 0.0, 0.75)
     glLineWidth(3)
     V, LINE_I = self.vbo_bbox_buffers
     glEnableClientState(GL_VERTEX_ARRAY)
@@ -193,7 +294,7 @@ class Renderable:
     glDisable(GL_BLEND)
 
   def renderLight(self):
-    pass
+    self.glMat()
   
   def render(self, ancestorSelected=False):
     self.glMat()
@@ -204,6 +305,8 @@ class Renderable:
     if self in selected:
       self.placeBBox()
       self.placeSel()
+    if self is highlighted:
+      self.placeHighlight()
     if self is monoselected:
       self.placeAxes()
       self.placeMonosel()
@@ -427,6 +530,13 @@ class Renderable:
   def cycleCheckChildren(self):
     return []
 
+  def rayBBIntersections(self, rayV):
+    self.glMat()
+    dist = testRayBBIntersection(rayV, self.minPoint, self.maxPoint)
+    if dist is None:
+      return
+    yield self, dist
+
 class Model(Renderable):
   '''Describes polyhedron-like 3-D model in a position and orientation'''
   
@@ -448,7 +558,14 @@ class Model(Renderable):
     return copy.copy(self) # i am a dead end
 
   def place(self):
-    PHONG_SHADER.use()
+    if renderingMode == FULL:
+      PHONG_SHADER.use()
+    elif renderingMode == FLAT:
+      PLAIN_SHADER.use()
+      glColor4f(0.0, 0.0, 0.0, 1.0)
+      glLineWidth(2)
+      self.mesh.render_wireframe()
+      FLAT_SHADER.use()
     glColor4f(1.0, 1.0, 1.0, 1.0)
     self.mesh.render(self.tex)
 
@@ -488,7 +605,7 @@ class Lamp(Renderable):
   def renderLight(self):
     if not self.visible:
       return
-    self.glMat()
+    super().renderLight()
     Lamp.lPositions[Lamp.i] = glGetModelviewPos()
     Lamp.lColorPowers[Lamp.i] = np.array(self.bulb.color) * self.bulb.power
     Lamp.i += 1
@@ -507,6 +624,15 @@ class Lamp(Renderable):
   def places_axes(self):
     pass
 
+  def place(self):
+    if renderingMode == FLAT:
+      PLAIN_SHADER.use()
+      glColor4f(1.0, 1.0, 0.0, 1.0)
+      gluSphere(gluNewQuadric(), 1, 25, 25)
+
+  def __copy__(self):
+    return Lamp(self.bulb, pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
+
 class Directory(Renderable):
   # Provides an OpenGL matrix transformation to put other Renderables in
   def __init__(self, rends=None, *args, **kwargs):
@@ -522,7 +648,7 @@ class Directory(Renderable):
     return Link(self)
 
   def __deepcopy__(self, memo):
-    directory = Directory(name=self.name)
+    directory = Directory(pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
     for rend in self.rends:
       directory.add(copy.deepcopy(rend))
     return directory
@@ -593,6 +719,13 @@ class Directory(Renderable):
   def cycleCheckChildren(self):
     return self.rends
 
+  def rayBBIntersections(self, rayV):
+    self.glMat()
+    for rend in self.rends:
+      glPushMatrix()
+      yield from rend.rayBBIntersections(rayV)
+      glPopMatrix()
+
 class Link(Renderable): # TODO: more overloads
   # Be cautious while using these
   # they're like link files in directories
@@ -645,6 +778,13 @@ class Link(Renderable): # TODO: more overloads
   def cycleCheckChildren(self):
     return self.directory.rends
 
+  def rayBBIntersections(self, rayV):
+    self.glMat()
+    for rend in self.directory.rends:
+      glPushMatrix()
+      yield from rend.rayBBIntersections(rayV)
+      glPopMatrix()
+
 class TreeError(Exception): # call when a tree is invalid (including links--they should not cycle to themselves)
   def __init__(self, path):
     self.path = path
@@ -655,10 +795,12 @@ class TreeError(Exception): # call when a tree is invalid (including links--they
 class Scene:
   '''Defines a list of renderable objects'''
   
-  def __init__(self, rends=set()):
-    self.rends = set()
-    for rend in rends:
-      self.add(rend)
+  def __init__(self, rends=None, ambientColor=(1.0, 1.0, 1.0), ambientPower=0.1):
+    if rends == None:
+      rends = set()
+    self.rends = rends
+    self.ambientColor = ambientColor
+    self.ambientPower = ambientPower
 
   def __iter__(self):
     return self.rends.__iter__()
@@ -675,21 +817,26 @@ class Scene:
   def clear(self):
     self.rends.clear()
 
-  def render(self, camera, aspect=1.33, mode="full", shader_name="basic"):
+  def render(self, camera, aspect=1.33, shader_name="basic"):
     global camPos, camTrueFovy, PHONG_SHADER
     camPos = camera.pos
     camTrueFovy = camera.getTrueFovy()
-    glClearColor(0.0, 0.0, 0.0, 0.0)
+    if renderingMode == FULL:
+      glClearColor(0.0, 0.0, 0.0, 0.0)
+    elif renderingMode == FLAT:
+      glClearColor(1.0, 1.0, 1.0, 0.0)
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT)
+    
     # Push camera position/perspective matrix onto stack
     gluCamera(camera, aspect) # custom convenience function
+    if renderingMode == FLAT:
+      gluGlobe() # draw a globe around the camera as a guide when orienting it
     glMatrixMode(GL_MODELVIEW)
 
-    # Initialize GL_LIGHT0
-    glEnable(GL_LIGHT0)
-    glLightfv(GL_LIGHT0, GL_POSITION, (0.0, 0.0, 0.0)) # at camera
-    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.2, 0.2, 0.2, 1.0))
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, (1.0, 1.0, 1.0, 1.0))
+    # Ambient Light
+    ambientColorPower = np.array(self.ambientColor)*self.ambientPower
+    PHONG_SHADER.use()
+    glUniform3f(Shader.current.uniformLocs["ambientColorPower"], *ambientColorPower)
 
     Lamp.begin()
     for rend in self.rends:
@@ -720,6 +867,26 @@ class Scene:
       rend.renderOverlay()
       glPopMatrix()
 
+  def getRendFromXY(self, XY, camera, aspect=1.33):
+    gluCamera(camera, aspect)
+    glMatrixMode(GL_MODELVIEW)
+    glLoadIdentity()
+    rayV = gluUnProject(*XY,1.0)
+    
+    gluCamera(camera, aspect)
+    glMatrixMode(GL_MODELVIEW)
+    result = None
+    minDist = float("Inf")
+    for rend in self.rends:
+      glPushMatrix()
+      for rend, dist in rend.rayBBIntersections(rayV):
+        if dist < minDist:
+          result = rend
+          minDist = dist
+      glPopMatrix()
+
+    return result
+
   def debug_tree(self):
     def tree(rend):
       yield "%d: %s"%(id(rend), rend.name)
@@ -740,8 +907,9 @@ def initEngine(): # only call once context has been established
   if initialised:
     return
 
-  global PHONG_SHADER, PLAIN_SHADER
+  global PHONG_SHADER, FLAT_SHADER, PLAIN_SHADER
   PHONG_SHADER = Shader(*SHADER_FILENAME_PAIRS["phong"])
+  FLAT_SHADER = Shader(*SHADER_FILENAME_PAIRS["flat"])
   PLAIN_SHADER = Shader(*SHADER_FILENAME_PAIRS["plain"])
   
   # Enable wanted gl modes
@@ -755,6 +923,10 @@ def initEngine(): # only call once context has been established
   glFogi(GL_FOG_MODE, GL_EXP)
   glFogf(GL_FOG_END, 1000.0)
   glFogf(GL_FOG_DENSITY, 0.1)
+
+  global frameBuffer
+  frameBuffer = glGenFramebuffers(1)
+  
   
   initialised = True
   

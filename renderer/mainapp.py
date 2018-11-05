@@ -115,7 +115,7 @@ class BetterSlider(QWidget):
   def blockSignals(self, doBlock):
     self.blocking = doBlock
 
-class glWidget(QGLWidget):
+class InteractiveGLWidget(QGLWidget):
   '''OpenGL+QT widget'''
   def __init__(self, *args, **kwargs):
     QGLWidget.__init__(self, *args, **kwargs)
@@ -171,10 +171,16 @@ class glWidget(QGLWidget):
     self.dt = now - self.lastt
     self.lastt = now
     if self.handleHeldKeys():
+##      engine.renderingMode = engine.FLAT
       self.update()
       self.parent.updateCamEdit()
       self.parent.updateSelEdit()
       self.parent.updateSelected()
+##    else:
+##      if not engine.renderingMode == engine.FULL and not self.dragging:
+##        engine.renderingMode = engine.FULL
+##        self.update()
+      
 
   def handleHeldKeys(self):
     cam = self.parent.UE.camera
@@ -253,11 +259,15 @@ class glWidget(QGLWidget):
     self.update()
 
   def mousePressEvent(self, event):
+    super().mousePressEvent(event)
     self.mousePos = event.x(), event.y()
     self.cam_rot = self.parent.UE.camera.rot
     self.dragging = True
+##    engine.renderingMode = engine.FLAT
+    self.update()
 
   def mouseMoveEvent(self, event):
+    X, Y = event.x(), event.y()
     cam = self.parent.UE.camera
     sel = engine.monoselected
     if self.dragging:
@@ -285,12 +295,19 @@ class glWidget(QGLWidget):
         cam.rot = Rot(dY/100, -dX/100, 0)*self.cam_rot
         
       self.parent.R.rectifyCamera()
-      self.update()
+##      engine.renderingMode = engine.FLAT
+    self.parent.highlightFromXY((X,self.dims[1]-Y))
+    self.update()
 
   def mouseReleaseEvent(self, event):
+    super().mouseReleaseEvent(event)
     self.dragging = False
     self.sel_dr = None
-    
+##    engine.renderingMode = engine.FULL
+##    if (event.x(), event.y()) == self.mousePos:
+##      self.parent.selectFromXY((event.x(),self.dims[1]-event.y()))
+    self.parent.selectFromXY((event.x(),self.dims[1]-event.y()))
+    self.update()
 
 class ObjList(QListWidget):
   '''QListWidget of environment objects (Mesh, Tex, Model, Lamp)'''
@@ -428,6 +445,7 @@ class ObjTree(QTreeWidget):
     self.objNodeDict = dict() # asset/renderable --> node
     self.groupNums = id_gen()
     self.itemClicked.connect(self.onItemClicked)
+    self.itemChanged.connect(self.onItemChanged)
     self.itemSelectionChanged.connect(self.onItemSelectionChanged)
     self.setSortingEnabled(True)
     
@@ -509,6 +527,10 @@ class ObjTree(QTreeWidget):
     return None
 
   def onItemClicked(self, item):
+    if keyModFlags() & Qt.ShiftModifier:
+      self.parent.move(item.obj, self.getCurrentDir())
+
+  def onItemChanged(self, item):
     if isinstance(item.obj, Renderable):
       item.obj.visible = item.checkState(2)==2
       self.parent.update()
@@ -532,6 +554,8 @@ class ObjTree(QTreeWidget):
     k = event.key()
     if k == Qt.Key_Escape:
       self.parent.select(None)
+    elif k == Qt.Key_Shift:
+      self.setSelectionMode(QTreeWidget.NoSelection)
     elif k == Qt.Key_Return:
       selItems = self.selectedItems()
       if selItems:
@@ -545,8 +569,14 @@ class ObjTree(QTreeWidget):
     elif k == Qt.Key_Down:
       self.parent.selectNextSibling()
 
+  def keyReleaseEvent(self, event):
+    k = event.key()
+    if k == Qt.Key_Shift:
+      self.setSelectionMode(QTreeWidget.SingleSelection)
+
   def focusOutEvent(self, event):
     self.itemDragged = None
+    self.setSelectionMode(QTreeWidget.SingleSelection)
 
   def mousePressEvent(self, event):
     index = self.indexAt(event.pos())
@@ -755,6 +785,11 @@ class MainApp(QMainWindow):
     scene.addAction(self.sceneMenu_makelamps)
     scene.addAction(self.sceneMenu_makegroups)
     scene.addAction(self.sceneMenu_quickgroup)
+    render = bar.addMenu("&Render")
+    self.renderMenu_fullmode = QAction(self.icons["3D Scene"], "&Full Mode")
+    self.renderMenu_flatmode = QAction(self.icons["Model"], "&Flat Mode")
+    render.addAction(self.renderMenu_fullmode)
+    render.addAction(self.renderMenu_flatmode)
     view = bar.addMenu("&View")
     self.viewMenu_env = QAction(self.icons["Scene"], "E&nvironment", checkable=True)
     self.viewMenu_edit = QAction(self.icons["Edit"], "&Edit", checkable=True)
@@ -766,7 +801,7 @@ class MainApp(QMainWindow):
     self.helpMenu_help = QAction(self.icons["Question"], "&Help")
     helpMenu.addAction(self.helpMenu_help)
 
-    self.gl = glWidget(self)
+    self.gl = InteractiveGLWidget(self)
     self.setCentralWidget(self.gl)
     
     self.envPane = QDockWidget("Environment", self)
@@ -784,8 +819,6 @@ class MainApp(QMainWindow):
     self.env.addTab(self.bulbList, self.icons["Bulb"], "")
     self.modelList.hide()
     self.lampList.hide()
-##    self.env.addTab(self.modelList, self.icons["Model"], "")
-##    self.env.addTab(self.lampList, self.icons["Lamp"], "")
     self.env.addTab(self.rendTree, self.icons["3D Scene"], "")
     self.envPane.setWidget(self.env)
     self.envPane.setFloating(False)
@@ -794,15 +827,19 @@ class MainApp(QMainWindow):
     self.editPane = QDockWidget("Edit", self)
     self.edit = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
     self.edit.setProperty("class", "BigTabs")
+    self.sceneEdit = QWidget()
+    self.sceneScrollArea = VerticalScrollArea()
     self.camEdit = QWidget()
     self.camScrollArea = VerticalScrollArea()
     self.selEdit = ResizableStackedWidget()
     self.selEdit.currentChanged.connect(lambda i: self.edit.onCurrentChanged(0))
     self.selScrollArea = VerticalScrollArea()
+    self.edit.addTab(self.sceneScrollArea, self.icons["Scene"], "")
     self.edit.addTab(self.camScrollArea, self.icons["Camera"], "")
     self.edit.addTab(self.selScrollArea, self.icons["Selected"], "")
     self.editPane.setWidget(self.edit)
     self.initEditPane()
+    self.sceneScrollArea.setWidget(self.sceneEdit)
     self.camScrollArea.setWidget(self.camEdit)
     self.selScrollArea.setWidget(self.selEdit)
     self.camScrollArea.setAlignment(Qt.AlignHCenter)
@@ -844,6 +881,8 @@ class MainApp(QMainWindow):
     self.sceneMenu_makelamps.triggered.connect(self.makeLamps)
     self.sceneMenu_makegroups.triggered.connect(self.makeGroups)
     self.sceneMenu_quickgroup.triggered.connect(self.quickGroup)
+    self.renderMenu_fullmode.triggered.connect(self.fullMode)
+    self.renderMenu_flatmode.triggered.connect(self.flatMode)
     self.viewMenu_env.triggered.connect(self.curryTogglePane(self.envPane))
     self.viewMenu_edit.triggered.connect(self.curryTogglePane(self.editPane))
     self.viewMenu_log.triggered.connect(self.curryTogglePane(self.logPane))
@@ -865,9 +904,9 @@ class MainApp(QMainWindow):
     quickShortcut("Ctrl+T", self.fileMenu_loadtextures)
     quickShortcut("Ctrl+B", self.assetMenu_makebulb)
 
-    quickShortcut("Ctrl+Shift+M", self.sceneMenu_makemodels)
-    quickShortcut("Ctrl+Shift+L", self.sceneMenu_makelamps)
-    quickShortcut("Ctrl+Shift+G", self.sceneMenu_makegroups)
+    quickShortcut("Ctrl+Alt+M", self.sceneMenu_makemodels)
+    quickShortcut("Ctrl+Alt+L", self.sceneMenu_makelamps)
+    quickShortcut("Ctrl+Alt+G", self.sceneMenu_makegroups)
     quickShortcut("Ctrl+G", self.sceneMenu_quickgroup)
 
     quickShortcut("F1", self.helpMenu_help)
@@ -887,6 +926,7 @@ class MainApp(QMainWindow):
     self.keyBind_shallowpasteselected = quickKeybind("Shift+'", self.shallowPasteSelected) # used when moving wih Shift
     self.keyBind_deleteselected = quickKeybind("Delete", self.deleteSelected)
     self.keyBind_focuscenter = quickKeybind("/", self.focusCenter)
+    self.keyBind_togglemode = quickKeybind("Q", self.toggleMode)
 
   def showHelp(self):
     self.helpPane.show()
@@ -933,9 +973,23 @@ class MainApp(QMainWindow):
     '''Empty all QListWidget's'''
     self.meshList.clear()
     self.texList.clear()
+    self.bulbList.clear()
     self.modelList.clear()
     self.lampList.clear()
     self.rendTree.clear()
+
+  def fullMode(self):
+    engine.renderingMode = engine.FULL
+    self.gl.update()
+
+  def flatMode(self):
+    engine.renderingMode = engine.FLAT
+    self.gl.update()
+
+  def toggleMode(self):
+    engine.renderingMode += 1
+    engine.renderingMode %= engine.NUM_MODES
+    self.gl.update()
 
   def addEnvObj(self, envobj, directory=None):
     '''Adds environment object into appropriate QListWidget'''
@@ -975,6 +1029,7 @@ class MainApp(QMainWindow):
     self.R.new()
     if base:
       B = Bulb(name="Main Bulb")
+##      self.add(B)
       self.add(Lamp(B, name="Main Lamp"))
       self.add(Directory(name="Main"))
     self.select(None)
@@ -1401,10 +1456,41 @@ class MainApp(QMainWindow):
     self.add(directory)
     self.select(directory)
 
+  def recolorAmbientLight(self):
+    M = QColorDialog(self)
+    C = M.getColor()
+    self.UE.scene.ambientColor = C.redF(), C.greenF(), C.blueF()
+    self.updateSceneEdit()
+
   def initEditPane(self):
     '''Initialises the edit pane'''
+    self.initSceneEdit()
     self.initCamEdit()
     self.initSelEdit()
+
+  def initSceneEdit(self):
+    L = self.sceneEditLayout = QVBoxLayout()
+    self.sceneEdit.setLayout(L)
+
+    heading = QLabel("Scene", font=self.fonts["heading"], alignment=Qt.AlignCenter)
+    ambientColor = self.sceneEdit_ambientColor = QLineEdit(readOnly=True)
+    ambientPower = self.sceneEdit_ambientPower = QDoubleSpinBox(minimum=0.0, maximum=1.0, singleStep=0.01)
+    recolorAmbient = self.sceneEdit_recolorAmbient = QPushButton(text="Recolor Ambient", icon=self.icons["Color"])
+
+    ambientBox = QGroupBox("Ambient Light")
+    ambientLayout = QFormLayout()
+    ambientBox.setLayout(ambientLayout)
+    ambientLayout.addRow("Color", ambientColor)
+    ambientLayout.addRow("Power", ambientPower)
+    ambientLayout.addWidget(recolorAmbient)
+
+    ambientPower.valueChanged.connect(self.updateScene)
+    recolorAmbient.clicked.connect(self.recolorAmbientLight)
+
+    L.addWidget(heading)
+    L.addWidget(ambientBox)
+
+    self.updateSceneEdit()
 
   def initCamEdit(self):
     '''Initialises the camera tab on the edit pane'''
@@ -1421,7 +1507,7 @@ class MainApp(QMainWindow):
     fovy = self.camEdit_fovy = QDoubleSpinBox(minimum=0.05, maximum=179.95, value=60, singleStep=0.05)
     zoom = self.camEdit_zoom = QDoubleSpinBox(minimum=1.0, maximum=1000.0, value=1, singleStep=0.05)
     for setting in [x, y, z, rx, ry, rz, fovy, zoom]:
-      setting.valueChanged.connect(self.camEditUpdate)
+      setting.valueChanged.connect(self.updateCamera)
     L.addWidget(heading)
 
     poseBox = QGroupBox("Pose")
@@ -1612,12 +1698,18 @@ class MainApp(QMainWindow):
 
     def selectMesh():
       assert isinstance(engine.monoselected, Model)
-      self.select(engine.monoselected.mesh)
+      if engine.monoselected.mesh.deleted:
+        self.reinitSelected()
+      else:
+        self.select(engine.monoselected.mesh)
     mesh.clicked.connect(selectMesh)
 
     def selectTexture():
-      assert isinstance(engine.monoselected, Tex)
-      self.select(engine.monoselected.tex)
+      assert isinstance(engine.monoselected, Model)
+      if engine.monoselected.tex.deleted:
+        self.reinitSelected()
+      else:
+        self.select(engine.monoselected.tex)
     tex.clicked.connect(selectTexture)
     
     visible.stateChanged.connect(self.updateSelected)
@@ -1653,7 +1745,7 @@ class MainApp(QMainWindow):
     assetBox = QGroupBox("Assets")
     assetLayout = QFormLayout()
     assetBox.setLayout(assetLayout)
-    assetLayout.addRow(iconLabel(self.icons["Mesh"]), bulb)
+    assetLayout.addRow(iconLabel(self.icons["Bulb"]), bulb)
 
     L.addWidget(heading)
     L.addWidget(name)
@@ -1670,7 +1762,10 @@ class MainApp(QMainWindow):
     
     def selectBulb():
       assert isinstance(engine.monoselected, Lamp)
-      self.select(engine.monoselected.bulb)
+      if engine.monoselected.bulb.deleted:
+        self.reinitSelected()
+      else:
+        self.select(engine.monoselected.bulb)
     bulb.clicked.connect(selectBulb)
 
     change.clicked.connect(self.reinitSelected)
@@ -1785,6 +1880,17 @@ class MainApp(QMainWindow):
     #===UPDATE===
     self.updateSelEdit()
 
+  def updateSceneEdit(self):
+    ambientColor = self.UE.scene.ambientColor
+    ambientPower = self.UE.scene.ambientPower
+    self.sceneEdit_ambientColor.setText(rrggbb(*ambientColor))
+    self.sceneEdit_ambientPower.setValue(ambientPower)
+
+  def updateScene(self):
+    ambientPower = self.sceneEdit_ambientPower.value()
+    self.UE.scene.ambientPower = ambientPower
+    self.gl.update()
+
   def updateCamEdit(self): # true settings -> displayed settings
     '''Updates the displayed settings for the camera'''
     x, y, z = self.UE.camera.pos
@@ -1804,7 +1910,7 @@ class MainApp(QMainWindow):
       setting.blockSignals(False)
     return
 
-  def camEditUpdate(self): # displayed settings -> true settings
+  def updateCamera(self): # displayed settings -> true settings
     '''Updates the camera variables from the displayed settings'''
     pos = Point(self.camEdit_x.value(),
                 self.camEdit_y.value(),
@@ -1991,7 +2097,10 @@ class MainApp(QMainWindow):
     self.shallowPaste(engine.clipboard)
 
   def deepPasteClipboard(self):
-    self.deepPaste(engine.clipboard)
+    try:
+      self.deepPaste(engine.clipboard)
+    except:
+      traceback.print_exc()
 
   def shallowPasteSelected(self):
     sel = engine.monoselected
@@ -2360,9 +2469,13 @@ class MainApp(QMainWindow):
         if nextIndex in range(parentNode.childCount()):
           self.select(parentNode.child(nextIndex).obj)
 
+  def highlight(self, rend):
+    engine.highlighted = rend
+
   def update(self):
     '''Overload: update to display correct features'''
     self.updateMenu()
+    self.updateSceneEdit()
     self.updateCamEdit()
     self.updateSelEdit()
     self.gl.update()
@@ -2393,6 +2506,12 @@ class MainApp(QMainWindow):
     else:
       for path in paths:
         self.loadAssetFile(path)
+
+  def selectFromXY(self, XY):
+    self.select(self.UE.scene.getRendFromXY(XY, self.UE.camera, self.gl.aspect))
+
+  def highlightFromXY(self, XY):
+    self.highlight(self.UE.scene.getRendFromXY(XY, self.UE.camera, self.gl.aspect))
 
 if __name__ == "__main__":
   window = QApplication(sys.argv)

@@ -32,7 +32,8 @@ Tb > File > Save as..., Ctrl+Shift+S: Save project as...
 Tb > File > Open..., Ctrl+O: Open project...
 
 << Graphics view >>
-Forward slash: focus on graphics view
+Forward slash: Focus on graphics view
+Click: Select leaf scene element [Model, Lamp]
 With keyboard focus on the graphics view and no SE selected:
 	W, A, S, D: Move camera
 	Left, Right: Pan camera
@@ -48,6 +49,9 @@ With keyboard focus on the graphics view and a SE selected:
 	Shift+Click and drag: Orbit camera around SE
 	Shift+Scroll: Zoom in and out on SE 
 
+<< Scene variables >>
+Edit > Scene > *: Edit scene variables
+
 << Assets >>
 Tb > File > Load Meshes..., Ctrl+M: Load mesh files (.obj)
 Tb > File > Load Textures..., Ctrl+T: Load textures from image files
@@ -55,10 +59,12 @@ Environment > Mesh or Texture tab > Click on asset: Select asset
 Edit > Asset > Delete: Delete selected asset
 Edit > Asset > Change: Change file of asset
 Edit > Asset > *: Change asset attributes
+Drag-and-drop asset files: Import files as assets
 
 << Scene elements >>
-Tb > Scene > Make Models, Ctrl+Shift+M: Construct models (Mesh, Texture pairs)
-Tb > Scene > Make Groups, Ctrl+Shift+G: Construct groups (directories)
+Tb > Scene > Make Models, Ctrl+Alt+M: Construct models (from (Mesh, Texture)'s)
+Tb > Scene > Make Lamp, Ctrl+Alt+L: Construct lamps (from Bulbs)
+Tb > Scene > Make Groups, Ctrl+Alt+G: Construct groups (directories)
 Tb > Scene > Make Group Here, Ctrl+G: Construct group at current camera location
 Environment > SE tree view > Click on SE: Select scene element
 Environment > SE tree view > [Up, Down, Left, Right]: Move selection cursor

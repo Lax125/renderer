@@ -11,8 +11,9 @@ He forgot to add a shader.
 
 from all_modules import *
 
-SHADER_FILENAME_PAIRS = {"phong": ("vshader_phong.glsl", "fshader_phong.glsl"),
-                         "plain": ("vshader_plain.glsl", "fshader_plain.glsl")}
+SHADER_FILENAME_PAIRS = dict()
+for shader_name in ["plain", "flat", "phong"]:
+  SHADER_FILENAME_PAIRS[shader_name] = ("./shaders/%s/vshader.glsl"%shader_name, "./shaders/%s/fshader.glsl"%shader_name)
 
 class Shader:
   current = None
@@ -25,7 +26,7 @@ class Shader:
       traceback.print_exc()
       sys.exit(1)
     self.uniformLocs = {"texture": glGetUniformLocation(self.program, "texture"),
-                        "ambient": glGetUniformLocation(self.program, "ambient"),
+                        "ambientColorPower": glGetUniformLocation(self.program, "ambientColorPower"),
                         "diffuse": glGetUniformLocation(self.program, "diffuse"),
                         "specular": glGetUniformLocation(self.program, "specular"),
                         "fresnel": glGetUniformLocation(self.program, "fresnel"),
@@ -33,8 +34,6 @@ class Shader:
                         "lCount": glGetUniformLocation(self.program, "lCount"),
                         "lData": glGetUniformLocation(self.program, "lData"),
                         "lPositions": glGetUniformLocation(self.program, "lPositions"),
-##                        "lPowers": glGetUniformLocation(self.program, "lPowers"),
-##                        "lColors": glGetUniformLocation(self.program, "lColors"),
                         "lColorPowers": glGetUniformLocation(self.program, "lColorPowers"),
 ##                        "lDirections": glGetUniformLocation(self.program, "lDirections"),
 ##                        "lAOEs": glGetUniformLocation(self.program, "lAOEs"),

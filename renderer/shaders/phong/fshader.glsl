@@ -2,7 +2,9 @@
 varying vec3 N;
 varying vec3 v;
 varying mediump vec2 texCoord;
+varying vec4 color;
 uniform sampler2D texture;
+uniform vec3 ambientColorPower;
 uniform float diffuse; // how much diffused light a texture reflects
 uniform float specular; // how much specular light a texture reflects
 uniform float shininess; // how glossy a texture looks
@@ -54,7 +56,7 @@ void main()
   vec3 texColor = texture2D(texture, texCoord).rgb;
   vec3 texC = texColor*texColor;
   vec3 E = normalize(-v);
-  vec3 ambientC = vec3(0.1, 0.1, 0.1)*vec3(0.1, 0.1, 0.1);
+  vec3 ambientC = ambientColorPower*ambientColorPower;
   vec3 diffuseC = vec3(0.0, 0.0, 0.0);
   vec3 specularC = vec3(0.0, 0.0, 0.0);
   vec3 fresnelC = vec3(0.0, 0.0, 0.0);
@@ -85,6 +87,6 @@ void main()
     fresnelC += baseC*Ifres;
   }
   vec3 M = propDampen(ambientC+diffuseC);
-  gl_FragColor = vec4((pow(dampen(texC*(M) + specularC + fresnelC), 0.5)), 0.0);
+  gl_FragColor = color * vec4((pow(dampen(texC*(M) + specularC + fresnelC), 0.5)), 0.0);
 }
 
