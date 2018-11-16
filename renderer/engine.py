@@ -237,7 +237,6 @@ class Renderable:
   def placeHighlight(self):
     self.placeBBox()
     self.placeSel()
-    self.placeOrigin()
 
   def placeBBox(self):
     PLAIN_SHADER.use()
@@ -341,7 +340,7 @@ class Renderable:
     if exporting:
       return
     self.glMat()
-    if self in selected:
+    if self in selected or self is highlighted:
       self.placeOrigin()
 
   def _setParent(self, parent):
