@@ -20,6 +20,12 @@ class Remote:
   def __init__(self, userenv):
     self.userenv = userenv # should be clear for saving
 
+  def getScene(self):
+    return self.userenv.scene
+
+  def getCamera(self):
+    return self.userenv.camera
+
   def new(self):
     '''New project'''
     self.clearUserEnv()

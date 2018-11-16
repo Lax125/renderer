@@ -34,8 +34,8 @@ def deStrPosRot(s):
 
 class Saver:
   def __init__(self, app):
-    self.UE = app.UE
-    self.R = app.R
+    self.UE = app.remote.userenv
+    self.R = app.remote
     self.app = app
     self.defaultMesh = Mesh("./assets/meshes/_default.obj")
     self.defaultTexture = Tex("./assets/textures/_default.png")
@@ -59,8 +59,8 @@ class Saver:
       f.write("# 3DBP\n")
 
       # first, write ambient light data
-      R,G,B = self.app.UE.scene.ambientColor
-      power = self.app.UE.scene.ambientPower
+      R,G,B = self.UE.scene.ambientColor
+      power = self.UE.scene.ambientPower
       f.write("AMBIENT %s %s %s %s\n"%(R,G,B, power))
       
       # Placement indicies conform to Wavefront's 1-indexing
@@ -162,7 +162,7 @@ class Saver:
     directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
     dirStack = [None]
     for line in dataopen("tmp/blueprint.dat", "r"):
-##      print(line, end="")
+      print(line, end="")
       words = shlex.split(line)
       if not words:
         continue
@@ -173,8 +173,8 @@ class Saver:
 
       elif command == "AMBIENT":
         R,G,B, power = castList([*[float]*3, float], args)
-        self.app.UE.scene.ambientColor = R,G,B
-        self.app.UE.scene.ambientPower = power
+        self.UE.scene.ambientColor = R,G,B
+        self.UE.scene.ambientPower = power
       
       elif command == "m": # mesh
         name, ID, cullbackface = castList([str, int, int], args)

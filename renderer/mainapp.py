@@ -8,10 +8,11 @@ Makes the graphical application and runs the main systems
 '''
 
 from all_modules import *
+from dropshadow import DropShadowFrame, _DropShadowWidget
 
 from rotpoint import Rot, Point
 from asset import id_gen, Asset, Mesh, Tex, Bulb
-from engine import Renderable, Model, Lamp, Directory, Link, initEngine, TreeError
+from engine import Camera, Renderable, Model, Lamp, Directory, Link, initEngine, TreeError
 import engine
 from userenv import UserEnv
 from remote import Remote
@@ -38,6 +39,11 @@ def rrggbb(r,g,b):
   gg = "%02x"%int(g*255)
   bb = "%02x"%int(b*255)
   return "#%s%s%s"%(rr,gg,bb)
+
+def qtifyColor(colorName):
+  qc = QColor()
+  qc.setNamedColor(colorName)
+  return qc
 
 def getTimestamp():
   return strftime("UTC %y-%m-%d %H:%M:%S", gmtime())
@@ -115,11 +121,25 @@ class BetterSlider(QWidget):
   def blockSignals(self, doBlock):
     self.blocking = doBlock
 
+
 class InteractiveGLWidget(QGLWidget):
   '''OpenGL+QT widget'''
+  drawScene = pyqtSignal(float) # signal emmited when wanting to redraw scene
+  mouseOver = pyqtSignal(QMouseEvent)
+  clicked = pyqtSignal(QMouseEvent)
+  requestSelect = pyqtSignal(object)
+  requestUpdate = pyqtSignal()
+  requestRectifyCamera = pyqtSignal()
+  requestLookAt = pyqtSignal(object)
+  resizeViewport = pyqtSignal(int, int)
+  focusChanged = pyqtSignal(bool)
+
+  requestChangeRendRot = pyqtSignal(Renderable, float, float, float)
+  requestChangeCameraRot = pyqtSignal(float, float, float)
+  requestMoveRendTo = pyqtSignal(Renderable, float, float, float)
+  
   def __init__(self, *args, **kwargs):
     QGLWidget.__init__(self, *args, **kwargs)
-    self.parent = self.parentWidget()
     self.dims = (100, 100)
     self.aspect = 1.0
     self.refresh_rate = 30
@@ -140,26 +160,43 @@ class InteractiveGLWidget(QGLWidget):
     self.dragging = False
     self.cam_rot = None
 
+    self.dropShadow = QGraphicsDropShadowEffect(self)
+    self.dropShadow.setOffset(0, 0)
+    self.dropShadow.setBlurRadius(0)
+##    self.setGraphicsEffect(self.dropShadow)
+
+  def qt2glXY(self, XY):
+    '''Input: QT XY coordinates
+       Output: OpenGL XY coordinates'''
+    X, Y = XY
+    # Flip Y
+    Y = self.dims[1] - Y
+    return X, Y
+
+  def getCamera(self): # redefined elsewhere
+    return Camera()
+
   def initializeGL(self):
     initEngine()
 
   def paintGL(self):
-    self.parent.R.renderScene(aspect=self.aspect)
+    self.drawScene.emit(self.aspect)
 
   def resizeGL(self, w, h):
     self.dims = w, h
     self.aspect = w/h
-    self.parent.R.resizeViewport(w,h)
+    self.resizeViewport.emit(w,h)
     super().resizeGL(w, h)
+    self.update()
 
   def keyPressEvent(self, event):
     if event.key() == Qt.Key_Escape:
-      self.parent.select(None)
+      self.requestSelect.emit(None)
     elif (event.key() == Qt.Key_Shift):
       if isinstance(engine.monoselected, Renderable):
-        self.parent.R.lookAt(engine.monoselected)
+        self.requestLookAt.emit(engine.monoselected)
       else:
-        self.parent.R.lookAt(Point(0, 0, 0)) # look at origin
+        self.requestLookAt.emit(Point(0, 0, 0)) # look at origin
       self.update()
     self.heldKeys.add(event.key())
 
@@ -172,10 +209,7 @@ class InteractiveGLWidget(QGLWidget):
     self.lastt = now
     if self.handleHeldKeys():
 ##      engine.renderingMode = engine.FLAT
-      self.update()
-      self.parent.updateCamEdit()
-      self.parent.updateSelEdit()
-      self.parent.updateSelected()
+      self.requestUpdate.emit()
 ##    else:
 ##      if not engine.renderingMode == engine.FULL and not self.dragging:
 ##        engine.renderingMode = engine.FULL
@@ -183,7 +217,7 @@ class InteractiveGLWidget(QGLWidget):
       
 
   def handleHeldKeys(self):
-    cam = self.parent.UE.camera
+    cam = self.getCamera()
     sel = engine.monoselected
     selRends = [obj for obj in engine.selected if isinstance(obj, Renderable)]
     
@@ -202,9 +236,9 @@ class InteractiveGLWidget(QGLWidget):
     if rotated:
       drx, dry, drz = dr
       if selRends and (keyModFlags() & Qt.ShiftModifier):
-        self.parent.R.changeRendRot(sel, dt*drx, dt*dry, dt*drz)
+        self.requestChangeRendRot.emit(sel, dt*drx, dt*dry, dt*drz)
       else:
-        self.parent.R.changeCameraRot(dt*drx, dt*dry, dt*drz)
+        self.requestChangeCameraRot.emit(dt*drx, dt*dry, dt*drz)
 
     dxyz = [0.0, 0.0, 0.0]
     moved = False
@@ -221,7 +255,7 @@ class InteractiveGLWidget(QGLWidget):
       dp = dt * cam.rot.get_transmat(invert=True) * dv
       if selRends and (keyModFlags() & Qt.ShiftModifier):
         if self.sel_dv is None:
-          self.parent.R.lookAt(engine.monoselected)
+          self.requestLookAt.emit(engine.monoselected)
           self.sel_dv = dict()
           for rend in selRends:
             selpos = rend.getTruePos()
@@ -229,7 +263,7 @@ class InteractiveGLWidget(QGLWidget):
         cam.pos += dp
         for rend in selRends:
           new_selpos = cam.pos + self.sel_dv[rend]
-          self.parent.R.moveRendTo(rend, *new_selpos)
+          self.requestMoveRendTo.emit(rend, *new_selpos)
       else:
         cam.pos += dp
         
@@ -240,7 +274,7 @@ class InteractiveGLWidget(QGLWidget):
 
   def wheelEvent(self, event):
     self.setFocus()
-    cam = self.parent.UE.camera
+    cam = self.getCamera()
     sel = engine.monoselected
     if keyModFlags() & Qt.ShiftModifier:
       if isinstance(sel, Renderable):
@@ -255,20 +289,18 @@ class InteractiveGLWidget(QGLWidget):
     else:
       cam.zoom *= 10**(event.angleDelta().y()/(360*10))
       cam.zoom = min(max(1.0, cam.zoom), 1000.0)
-    self.parent.updateCamEdit()
-    self.update()
+    self.requestUpdate.emit()
 
   def mousePressEvent(self, event):
     super().mousePressEvent(event)
     self.mousePos = event.x(), event.y()
-    self.cam_rot = self.parent.UE.camera.rot
+    self.cam_rot = self.getCamera().rot
     self.dragging = True
-##    engine.renderingMode = engine.FLAT
     self.update()
 
   def mouseMoveEvent(self, event):
     X, Y = event.x(), event.y()
-    cam = self.parent.UE.camera
+    cam = self.getCamera()
     sel = engine.monoselected
     if self.dragging:
       if keyModFlags() & Qt.ShiftModifier:
@@ -280,7 +312,7 @@ class InteractiveGLWidget(QGLWidget):
           pass
         else:
           if self.sel_dr is None:
-            self.parent.R.lookAt(selpos)
+            self.requestLookAt.emit(selpos)
             self.sel_dr = sum(dn**2 for dn in selpos - cam.pos)**0.5
           # shift the angle appropriately
           X, Y = self.mousePos
@@ -294,28 +326,37 @@ class InteractiveGLWidget(QGLWidget):
         dX, dY = event.x() - X, event.y() - Y
         cam.rot = Rot(dY/100, -dX/100, 0)*self.cam_rot
         
-      self.parent.R.rectifyCamera()
-##      engine.renderingMode = engine.FLAT
-    self.parent.highlightFromXY((X,self.dims[1]-Y))
+      self.requestRectifyCamera.emit()
+    self.mouseOver.emit(event)
     self.update()
 
   def mouseReleaseEvent(self, event):
     super().mouseReleaseEvent(event)
     self.dragging = False
     self.sel_dr = None
-##    engine.renderingMode = engine.FULL
-##    if (event.x(), event.y()) == self.mousePos:
-##      self.parent.selectFromXY((event.x(),self.dims[1]-event.y()))
-    self.parent.selectFromXY((event.x(),self.dims[1]-event.y()))
+    if (event.x(), event.y()) == self.mousePos:
+      self.clicked.emit(event)
     self.update()
+
+  def focusInEvent(self, event):
+    super().focusInEvent(event)
+    self.dropShadow.setBlurRadius(20)
+    self.focusChanged.emit(True)
+
+  def focusOutEvent(self, event):
+    super().focusOutEvent(event)
+    self.dropShadow.setBlurRadius(0)
+    self.focusChanged.emit(False)
 
 class ObjList(QListWidget):
   '''QListWidget of environment objects (Mesh, Tex, Model, Lamp)'''
+  requestUpdate = pyqtSignal()
+  requestSelect = pyqtSignal(object)
+  
   iconDict = dict() # obj type --> icon
   bgDict = dict() # obj type --> bg brush
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-    self.parent = self.parentWidget()
     self.setSortingEnabled(True)
     self.setSelectionMode(3)
     self.itemClicked.connect(self.onItemClicked)
@@ -329,15 +370,16 @@ class ObjList(QListWidget):
 
   def onItemDoubleClicked(self, item):
     if isinstance(item.obj, Renderable):
-      self.parent.R.lookAt(item.obj)
+      self.requestLookAt.emit(item.obj)
+      self.update()
 
   def onItemSelectionChanged(self):
     items = self.selectedItems()
     engine.selected = set([item.obj for item in items])
     if items:
-      self.parent.select(items[0].obj)
+      self.requestSelect.emit(items[0].obj)
     else:
-      self.parent.select(None)
+      self.requestSelect.emit(None)
 
   def add(self, obj):
     new_item = QListWidgetItem(obj.name)
@@ -359,10 +401,7 @@ class ObjList(QListWidget):
 
   def keyPressEvent(self, event):
     k = event.key()
-    if k == Qt.Key_Delete:
-      for item in self.selectedItems():
-        self.parent.delete(item.obj)
-      self.parent.update()
+    pass # delete key now handled globally
 
   def update(self):
     for i in range(self.count()):
@@ -434,6 +473,15 @@ class ObjNode(QTreeWidgetItem):
       self.child(i).update()
 
 class ObjTree(QTreeWidget):
+  requestUpdate = pyqtSignal() # signal emitted when wanting to update the entire app
+  requestMove = pyqtSignal(object, object) # signal emitted when wanting to put the first object into the second as a child
+  requestSelect = pyqtSignal(object) # signal emitted when wanting to select an object
+  requestSelectParent = pyqtSignal()
+  requestSelectFirstChild = pyqtSignal()
+  requestSelectPrevSibling = pyqtSignal()
+  requestSelectNextSibling = pyqtSignal()
+  requestLookAt = pyqtSignal(object) # signal emitted when wanting to look at a Renderable or Point
+  
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -441,10 +489,10 @@ class ObjTree(QTreeWidget):
     self.viewport().setAcceptDrops(True)
     self.setDropIndicatorShown(False)
     self.setDragDropMode(QAbstractItemView.InternalMove)
-    self.parent = self.parentWidget()
     self.objNodeDict = dict() # asset/renderable --> node
     self.groupNums = id_gen()
     self.itemClicked.connect(self.onItemClicked)
+    self.itemDoubleClicked.connect(self.onItemDoubleClicked)
     self.itemChanged.connect(self.onItemChanged)
     self.itemSelectionChanged.connect(self.onItemSelectionChanged)
     self.setSortingEnabled(True)
@@ -505,7 +553,7 @@ class ObjTree(QTreeWidget):
     self.selectionModel().clearSelection()
     if obj in self.objNodeDict:
       self.objNodeDict[obj].setSelected(True)
-      self.showObj(obj)
+      self.scrollToItem(self.objNodeDict[obj])
     self.blockSignals(False)
 
   def showObj(self, obj):
@@ -528,22 +576,23 @@ class ObjTree(QTreeWidget):
 
   def onItemClicked(self, item):
     if keyModFlags() & Qt.ShiftModifier:
-      self.parent.move(item.obj, self.getCurrentDir())
+      self.requestMove.emit(item.obj, self.getCurrentDir())
+
+  def onItemDoubleClicked(self, item):
+    if isinstance(item.obj, Renderable):
+      self.requestLookAt.emit(item.obj)
 
   def onItemChanged(self, item):
     if isinstance(item.obj, Renderable):
       item.obj.visible = item.checkState(2)==2
-      self.parent.update()
+      self.requestUpdate.emit()
 
   def onItemSelectionChanged(self):
     selItems = self.selectedItems()
     if selItems:
-      self.parent.select(selItems[0].obj)
-      if isinstance(selItems[0].obj, Renderable):
-        self.parent.R.lookAt(selItems[0].obj)
+      self.requestSelect.emit(selItems[0].obj)
 
   def keyPressEvent(self, event):
-    cam = self.parent.UE.camera
     selItems = self.selectedItems()
     if selItems:
       selItem = selItems[0]
@@ -553,7 +602,7 @@ class ObjTree(QTreeWidget):
       sel = None
     k = event.key()
     if k == Qt.Key_Escape:
-      self.parent.select(None)
+      self.requestSelect.emit(None)
     elif k == Qt.Key_Shift:
       self.setSelectionMode(QTreeWidget.NoSelection)
     elif k == Qt.Key_Return:
@@ -561,13 +610,13 @@ class ObjTree(QTreeWidget):
       if selItems:
         selItems[0].setExpanded(not selItems[0].isExpanded())
     elif k == Qt.Key_Left:
-      self.parent.selectParent()
+      self.requestSelectParent.emit()
     elif k == Qt.Key_Right:
-      self.parent.selectFirstChild()
+      self.requestSelectFirstChild.emit()
     elif k == Qt.Key_Up:
-      self.parent.selectPrevSibling()
+      self.requestSelectPrevSibling.emit()
     elif k == Qt.Key_Down:
-      self.parent.selectNextSibling()
+      self.requestSelectNextSibling.emit()
 
   def keyReleaseEvent(self, event):
     k = event.key()
@@ -581,7 +630,7 @@ class ObjTree(QTreeWidget):
   def mousePressEvent(self, event):
     index = self.indexAt(event.pos())
     if (index.row() == -1):
-      self.parent.select(None)
+      self.requestSelect.emit(None)
     else:
       self.itemDragged = self.itemAt(event.pos())
       super().mousePressEvent(event)
@@ -596,9 +645,9 @@ class ObjTree(QTreeWidget):
       return
     item = self.itemAt(event.pos())
     if isinstance(item.obj, Directory) or self.itemDragged is None:
-      self.parent.move(self.itemDragged.obj, item.obj)
+      self.requestMove.emit(self.itemDragged.obj, item.obj)
     else:
-      self.parent.move(self.itemDragged.obj, item.obj.parent)
+      self.requestMove.emit(self.itemDragged.obj, item.obj.parent)
   
 class Modal(QDialog):
   '''A dialog box that grabs focus until closed'''
@@ -662,16 +711,13 @@ class VerticalScrollArea(QScrollArea):
       return QSize(W.sizeHint().width() + self.verticalScrollBar().width()+5, 0)
     return QSize(0, 0)
 
-def CBrush(hexcolor):
-  qc = QColor()
-  qc.setNamedColor(hexcolor)
-  return QBrush(qc)
+def CBrush(colorName):
+  return QBrush(qtifyColor(colorName))
 
 class MainApp(QMainWindow):
   '''Main Application, uses QT'''
   def __init__(self, parent=None):
-    self.UE = UserEnv()
-    self.R = Remote(self.UE)
+    self.remote = Remote(UserEnv())
 
     super().__init__(parent)
     self._init_style()
@@ -679,11 +725,11 @@ class MainApp(QMainWindow):
     self._make_widgets()
     self._init_hotkeys()
     self.resize(1000, 500)
-    self.setWindowIcon(self.icons["Model"])
+    self.setWindowIcon(self.icons["Window Icon"])
     self.setWindowTitle(APPNAME)
     self.show()
     self.newProject(silent=True, base=True)
-    self.S = Saver(self)
+    self.saver = Saver(self)
     
     self.setAcceptDrops(True)
   
@@ -711,21 +757,25 @@ class MainApp(QMainWindow):
                           ("Window", QStyle.SP_TitleBarNormalButton)]:
       self.icons[name] = self.style().standardIcon(stdicon)
 
-    for name, fn in [("Mesh", r"./assets/icons/mesh.png"),
-                     ("Texture", r"./assets/icons/texture.png"),
-                     ("Bulb", r"./assets/icons/bulb.png"),
-                     ("Model", r"./assets/icons/model.png"),
-                     ("Lamp", r"./assets/icons/lamp.png"),
-                     ("Object Group", r"./assets/icons/objectgroup.png"),
-                     ("Link", r"./assets/icons/link.png"),
-                     ("3D Scene", r"./assets/icons/3dscene.png"),
-                     ("Scene", r"./assets/icons/scene.png"),
-                     ("Edit", r"./assets/icons/edit.png"),
-                     ("Camera", r"./assets/icons/camera.png"),
-                     ("Selected", r"./assets/icons/selected.png"),
-                     ("Image File", r"./assets/icons/imagefile.png"),
-                     ("Color", r"./assets/icons/color.png")]:
-      self.icons[name] = QIcon(fn)
+    ICON_PATH = "./assets/icons/dark_theme/"
+    for name, fn in [("Mesh", r"mesh.png"),
+                     ("Texture", r"texture.png"),
+                     ("Bulb", r"bulb.png"),
+                     ("Model", r"model.png"),
+                     ("Lamp", r"lamp.png"),
+                     ("Object Group", r"objectgroup.png"),
+                     ("Link", r"link.png"),
+                     ("3D Scene", r"3dscene.png"),
+                     ("Scene", r"scene.png"),
+                     ("Edit", r"edit.png"),
+                     ("Camera", r"camera.png"),
+                     ("Selected", r"selected.png"),
+                     ("Image File", r"imagefile.png"),
+                     ("Color", r"color.png")]:
+      self.icons[name] = QIcon(os.path.join(ICON_PATH, fn))
+
+    WINDOW_ICON_FN = "./assets/icons/window_icon.png"
+    self.icons["Window Icon"] = QIcon(WINDOW_ICON_FN)
 
     self.fonts = dict()
     self.fonts["heading"] = QFont("Calibri", 16, QFont.Bold)
@@ -802,7 +852,17 @@ class MainApp(QMainWindow):
     helpMenu.addAction(self.helpMenu_help)
 
     self.gl = InteractiveGLWidget(self)
-    self.setCentralWidget(self.gl)
+    self.gl.getCamera = self.remote.getCamera
+    self.glDSF = _DropShadowWidget()
+    self.glDSFLayout = QVBoxLayout()
+    self.glDSFLayout.setContentsMargins(0,0, 0,0)
+    self.glDSFLayout.addWidget(self.gl)
+    self.glDSF.setLayout(self.glDSFLayout)
+    self.setCentralWidget(self.glDSF)
+    self.glDSF.setOffset(QPoint(0,0))
+    self.glDSF.setColor(qtifyColor("#ffd700"))
+    self.glDSF.setRadius(10)
+    self.glDSF.setProperty("class", "DarkTheme")
     
     self.envPane = QDockWidget("Environment", self)
     self.env = ResizableTabWidget(movable=True, tabPosition=QTabWidget.North)
@@ -891,6 +951,37 @@ class MainApp(QMainWindow):
     self.logPane.visibilityChanged.connect(self.updateMenu)
     self.helpMenu_help.triggered.connect(self.showHelp)
 
+    # connect signals from widgets
+    self.gl.drawScene.connect(self.remote.renderScene)
+    self.gl.mouseOver.connect(lambda e: self.highlightFromXY((e.x(),e.y())))
+    self.gl.clicked.connect(lambda e: self.selectFromXY((e.x(),e.y())))
+    self.gl.requestSelect.connect(self.select)
+    self.gl.requestUpdate.connect(self.update)
+    self.gl.requestRectifyCamera.connect(self.remote.rectifyCamera)
+    self.gl.requestLookAt.connect(self.remote.lookAt)
+    self.gl.resizeViewport.connect(self.remote.resizeViewport)
+    self.gl.focusChanged.connect(self.glFocusChanged)
+    self.gl.requestChangeRendRot.connect(self.remote.changeRendRot)
+    self.gl.requestChangeCameraRot.connect(self.remote.changeCameraRot)
+    self.gl.requestMoveRendTo.connect(self.remote.moveRendTo)
+
+    self.texList.requestUpdate.connect(self.update)
+    self.texList.requestSelect.connect(self.select)
+    self.meshList.requestUpdate.connect(self.update)
+    self.meshList.requestSelect.connect(self.select)
+    self.bulbList.requestUpdate.connect(self.update)
+    self.bulbList.requestSelect.connect(self.select)
+    
+    self.rendTree.requestUpdate.connect(self.update)
+    self.rendTree.requestMove.connect(self.move)
+    self.rendTree.requestSelect.connect(self.select)
+    self.rendTree.requestSelectParent.connect(self.selectParent)
+    self.rendTree.requestSelectFirstChild.connect(self.selectFirstChild)
+    self.rendTree.requestSelectPrevSibling.connect(self.selectPrevSibling)
+    self.rendTree.requestSelectNextSibling.connect(self.selectNextSibling)
+    self.rendTree.requestLookAt.connect(self.remote.lookAt)
+    
+
   def _init_hotkeys(self):
     def quickShortcut(keySeq, qaction):
       qaction.setShortcut(QKeySequence(keySeq))
@@ -925,7 +1016,7 @@ class MainApp(QMainWindow):
     self.keyBind_shallowpasteclipboard = quickKeybind("Ctrl+Shift+V", self.shallowPasteClipboard)
     self.keyBind_shallowpasteselected = quickKeybind("Shift+'", self.shallowPasteSelected) # used when moving wih Shift
     self.keyBind_deleteselected = quickKeybind("Delete", self.deleteSelected)
-    self.keyBind_focuscenter = quickKeybind("/", self.focusCenter)
+    self.keyBind_focusgl = quickKeybind("/", self.focusGL)
     self.keyBind_togglemode = quickKeybind("Q", self.toggleMode)
 
   def showHelp(self):
@@ -933,9 +1024,16 @@ class MainApp(QMainWindow):
     self.helpPane.activateWindow()
     self.helpPane.setFocus()
 
-  def focusCenter(self):
+  def focusGL(self):
     self.activateWindow()
-    self.centralWidget().setFocus()
+    self.gl.setFocus()
+
+  def glFocusChanged(self, glHasFocus):
+    if glHasFocus:
+      self.glDSF.setRadius(20)
+    else:
+      self.glDSF.setRadius(0)
+    self.glDSF.update()
 
   def updateMenu(self):
     self.viewMenu_env.setChecked(self.envPane.isVisible())
@@ -1007,10 +1105,10 @@ class MainApp(QMainWindow):
   def add(self, obj, directory=None):
     if directory is None:
       directory = self.rendTree.getCurrentDir()
-    if self.R.add(obj, directory):
+    if self.remote.add(obj, directory):
       return
     self.addEnvObj(obj, directory)
-##    self.UE.scene.debug_tree()
+##    self.remote.getScene().debug_tree()
 
   def setCurrentFilename(self, fn, silent=False):
     self.filename = fn
@@ -1026,10 +1124,10 @@ class MainApp(QMainWindow):
     if not silent and not YNPrompt(self, "New", "Make new project? All unsaved changed will be lost.", factory=QMessageBox.warning):
       return
     self.clearLists()
-    self.R.new()
+    self.remote.new()
     if base:
       B = Bulb(name="Main Bulb")
-##      self.add(B)
+      self.add(B)
       self.add(Lamp(B, name="Main Lamp"))
       self.add(Directory(name="Main"))
     self.select(None)
@@ -1046,7 +1144,7 @@ class MainApp(QMainWindow):
       return
     
     try:
-      self.S.save(self.filename)
+      self.saver.save(self.filename)
     except:
       self.logEntry("Warning", "Could not save to %s; manually select filename"%shortfn(self.filename))
       self.saveasProject()
@@ -1063,7 +1161,7 @@ class MainApp(QMainWindow):
     if fd.exec_():
       fn = fd.selectedFiles()[0]
       try:
-        self.S.save(fn)
+        self.saver.save(fn)
       except:
         self.logEntry("Error", "Could not save project to %s"%shortfn(fn))
       else:
@@ -1099,7 +1197,7 @@ class MainApp(QMainWindow):
   def load(self, fn):
     '''Load project from filename fn'''
     try:
-      self.S.load(fn)
+      self.saver.load(fn)
     except IOError as e:
       self.logEntry("Error", "Unable to fully load from %s"%shortfn(fn))
       print(e)
@@ -1111,10 +1209,10 @@ class MainApp(QMainWindow):
 
   def restoreProject(self):
     '''Attempt to restore project from previous session'''
-    if self.S.canRestore() and YNPrompt(self, "Restore", "Restore previous session?"):
+    if self.saver.canRestore() and YNPrompt(self, "Restore", "Restore previous session?"):
       try:
         self.newProject(silent=True)
-        self.S.load_appdata()
+        self.saver.load_appdata()
 ##        R = Bulb(color=(1.0, 0.0, 0.0), power=10.0)
 ##        self.add(R)
 ##        G = Bulb(color=(0.0, 1.0, 0.0), power=10.0)
@@ -1177,7 +1275,6 @@ class MainApp(QMainWindow):
 
   def exportImage(self):
     '''Prompt to export image in a size'''
-    self.select(None)
     M = Modal(self)
     M.setWindowTitle("Export Image")
     layout = QGridLayout()
@@ -1203,9 +1300,10 @@ class MainApp(QMainWindow):
       w, h = width.value(), height.value()
       # Yes, resize the ACTUAL gl widget. This is the only way.
       self.gl.resize(w, h) # It won't show up anyway.
+      engine.exporting = True
       self.gl.paintGL()
-      pixels = glReadPixels(0,0, w,h, GL_RGBA, GL_UNSIGNED_BYTE)
       im = self.gl.grabFrameBuffer()
+      engine.exporting = False
       self.gl.resize(*current_dims)
       self.gl.paintGL()
       
@@ -1247,7 +1345,7 @@ class MainApp(QMainWindow):
     layout.addWidget(poseBox, 0,1, 1,1)
     poseLayout = QFormLayout()
     poseBox.setLayout(poseLayout)
-    basepos, baserot = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basepos, baserot = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
     baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
     x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
@@ -1334,7 +1432,7 @@ class MainApp(QMainWindow):
     layout.addWidget(poseBox, 0,1, 1,1)
     poseLayout = QFormLayout()
     poseBox.setLayout(poseLayout)
-    basepos, _ = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basepos, _ = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
     x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
     y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
@@ -1396,7 +1494,7 @@ class MainApp(QMainWindow):
     layout.addWidget(poseBox, 0,0, 1,1)
     poseLayout = QFormLayout()
     poseBox.setLayout(poseLayout)
-    basepos, baserot = basePosRot(self.UE.camera.pos, self.UE.camera.rot, engine.monoselected)
+    basepos, baserot = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
     baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
     x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
@@ -1449,7 +1547,7 @@ class MainApp(QMainWindow):
     M.exec_() # show the modal
 
   def quickGroup(self):
-    cam = self.UE.camera
+    cam = self.remote.getCamera()
     directory = Directory()
     directory.pos, directory.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
     directory.name = "My Group"
@@ -1459,7 +1557,7 @@ class MainApp(QMainWindow):
   def recolorAmbientLight(self):
     M = QColorDialog(self)
     C = M.getColor()
-    self.UE.scene.ambientColor = C.redF(), C.greenF(), C.blueF()
+    self.remote.getScene().ambientColor = C.redF(), C.greenF(), C.blueF()
     self.updateSceneEdit()
 
   def initEditPane(self):
@@ -1482,13 +1580,14 @@ class MainApp(QMainWindow):
     ambientBox.setLayout(ambientLayout)
     ambientLayout.addRow("Color", ambientColor)
     ambientLayout.addRow("Power", ambientPower)
-    ambientLayout.addWidget(recolorAmbient)
+##    ambientLayout.addWidget(recolorAmbient)
 
     ambientPower.valueChanged.connect(self.updateScene)
     recolorAmbient.clicked.connect(self.recolorAmbientLight)
 
     L.addWidget(heading)
     L.addWidget(ambientBox)
+    L.addWidget(recolorAmbient)
 
     self.updateSceneEdit()
 
@@ -1881,22 +1980,22 @@ class MainApp(QMainWindow):
     self.updateSelEdit()
 
   def updateSceneEdit(self):
-    ambientColor = self.UE.scene.ambientColor
-    ambientPower = self.UE.scene.ambientPower
+    ambientColor = self.remote.getScene().ambientColor
+    ambientPower = self.remote.getScene().ambientPower
     self.sceneEdit_ambientColor.setText(rrggbb(*ambientColor))
     self.sceneEdit_ambientPower.setValue(ambientPower)
 
   def updateScene(self):
     ambientPower = self.sceneEdit_ambientPower.value()
-    self.UE.scene.ambientPower = ambientPower
+    self.remote.getScene().ambientPower = ambientPower
     self.gl.update()
 
   def updateCamEdit(self): # true settings -> displayed settings
     '''Updates the displayed settings for the camera'''
-    x, y, z = self.UE.camera.pos
-    rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in self.UE.camera.rot)
-    fovy = self.UE.camera.fovy
-    zoom = self.UE.camera.zoom
+    x, y, z = self.remote.getCamera().pos
+    rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in self.remote.getCamera().rot)
+    fovy = self.remote.getCamera().fovy
+    zoom = self.remote.getCamera().zoom
     for setting, var in [(self.camEdit_x, x),
                          (self.camEdit_y, y),
                          (self.camEdit_z, z),
@@ -1920,7 +2019,7 @@ class MainApp(QMainWindow):
               pi*self.camEdit_rz.value()/180)
     fovy = self.camEdit_fovy.value()
     zoom = self.camEdit_zoom.value()
-    self.R.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
+    self.remote.configCamera(pos=pos, rot=rot, fovy=fovy, zoom=zoom)
     self.gl.update()
 
   def reinitSelected(self):
@@ -1938,9 +2037,9 @@ class MainApp(QMainWindow):
           newMesh = Mesh(fn)
           newMesh.cullbackface = S.cullbackface
           newMesh.name = S.name
-          self.R.delete(S)
+          self.remote.delete(S)
           S.__dict__ = newMesh.__dict__
-          self.R.add(S)
+          self.remote.add(S)
         except:
           self.logEntry("Error", "Bad mesh file: %s"%shortfn(fn))
         else:
@@ -1961,9 +2060,9 @@ class MainApp(QMainWindow):
         try:
           newTex = Tex(fn)
           newTex.name = S.name
-          self.R.delete(S)
+          self.remote.delete(S)
           S.__dict__ = newTex.__dict__
-          self.R.add(S)
+          self.remote.add(S)
         except:
           self.logEntry("Error", "Bad image file: %s"%shortfn(fn))
         else:
@@ -2056,7 +2155,7 @@ class MainApp(QMainWindow):
     if type(obj) in listDict:
       l = listDict[type(obj)]
       l.take(obj)
-    self.R.delete(obj)
+    self.remote.delete(obj)
     # Deselect object
     engine.selected.discard(obj)
     if isinstance(engine.monoselected, Renderable):
@@ -2068,7 +2167,7 @@ class MainApp(QMainWindow):
     engine.clipboard = engine.monoselected
 
   def shallowPaste(self, obj):
-    cam = self.UE.camera
+    cam = self.remote.getCamera()
     if obj is not None:
       try:
         sCopy = copy.copy(obj)
@@ -2077,11 +2176,9 @@ class MainApp(QMainWindow):
         self.add(sCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
-      else:
-        self.select(sCopy)
 
   def deepPaste(self, obj):
-    cam = self.UE.camera
+    cam = self.remote.getCamera()
     if obj is not None:
       try:
         dCopy = copy.deepcopy(obj)
@@ -2090,8 +2187,6 @@ class MainApp(QMainWindow):
         self.add(dCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
-      else:
-        self.select(dCopy)
 
   def shallowPasteClipboard(self):
     self.shallowPaste(engine.clipboard)
@@ -2115,10 +2210,10 @@ class MainApp(QMainWindow):
   def move(self, rend, directory):
     try:
       if rend.parent is None:
-        self.UE.scene.discard(rend)
+        self.remote.getScene().discard(rend)
       rend.setParent(directory)
       if rend.parent is None:
-        self.UE.scene.add(rend)
+        self.remote.getScene().add(rend)
     except TreeError as e:
       self.logEntry("Error", "Symlink cycle: %s"%e)
     else:
@@ -2479,7 +2574,6 @@ class MainApp(QMainWindow):
     self.updateCamEdit()
     self.updateSelEdit()
     self.gl.update()
-    super().update()
 
   def closeEvent(self, event):
     if YNPrompt(self, "Close", "Exit %s? Unsaved progress may still be accessed next session."%APPNAME, factory=QMessageBox.warning):
@@ -2491,7 +2585,7 @@ class MainApp(QMainWindow):
     self.editPane.hide()
     self.logPane.hide()
     self.helpPane.hide()
-    self.S.update()
+    self.saver.update()
     print("Goodbye!")
 
   def dragEnterEvent(self, event):
@@ -2508,10 +2602,12 @@ class MainApp(QMainWindow):
         self.loadAssetFile(path)
 
   def selectFromXY(self, XY):
-    self.select(self.UE.scene.getRendFromXY(XY, self.UE.camera, self.gl.aspect))
+    XY = self.gl.qt2glXY(XY)
+    self.select(self.remote.getScene().getRendFromXY(XY, self.remote.getCamera(), self.gl.aspect))
 
   def highlightFromXY(self, XY):
-    self.highlight(self.UE.scene.getRendFromXY(XY, self.UE.camera, self.gl.aspect))
+    XY = self.gl.qt2glXY(XY)
+    self.highlight(self.remote.getScene().getRendFromXY(XY, self.remote.getCamera(), self.gl.aspect))
 
 if __name__ == "__main__":
   window = QApplication(sys.argv)

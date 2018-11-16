@@ -28,6 +28,7 @@ logger = logging.getLogger('engine')
 NUM_MODES = 2
 FLAT = 0
 FULL = 1
+exporting = False
 renderingMode = FULL
 selected = set()
 monoselected = None
@@ -57,9 +58,9 @@ def glGetModelviewPos():
 
 def glGetModelviewAxes():
   M = glGetModelview()
-  xAxis = np.array([M[0,0], M[0,1], M[0,2]])
-  yAxis = np.array([M[1,0], M[1,1], M[1,2]])
-  zAxis = np.array([M[2,0], M[2,1], M[2,2]])
+  xAxis = normalize(np.array([M[0,0], M[0,1], M[0,2]]))
+  yAxis = normalize(np.array([M[1,0], M[1,1], M[1,2]]))
+  zAxis = normalize(np.array([M[2,0], M[2,1], M[2,2]]))
   return xAxis, yAxis, zAxis
 
 def glApplyRot(rot, invert=False):
@@ -80,7 +81,6 @@ def glGetScale():
 def gluGlobe():
   glMatrixMode(GL_MODELVIEW)
   glPushMatrix()
-  glLoadIdentity()
   PLAIN_SHADER.use()
   glColor4f(0.0, 0.0, 0.0, 0.0)
   glLineWidth(1)
@@ -111,6 +111,12 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   tMax = 10000000.0 # the length of the ray if it were cut off by the farthest side of the BBox
   dPos = glGetModelviewPos()
 
+  scale = glGetScale()
+  OBBmin = BBmin*scale
+  OBBmax = BBmax*scale
+##  OBBmin = np.array([-1,-1,-1])
+##  OBBmax = np.array([ 1, 1, 1])
+
   # TEST ALL AXES
   xAxis, yAxis, zAxis = glGetModelviewAxes()
   
@@ -119,8 +125,8 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   f = np.dot(rayV, xAxis)
   if f == 0.0:
     f = epsilon
-  t1 = (e+BBmin[0])/f
-  t2 = (e+BBmax[0])/f
+  t1 = (e+OBBmin[0])/f
+  t2 = (e+OBBmax[0])/f
   if t1 > t2:
     t1, t2 = t2, t1
   tMin = max(tMin, t1)
@@ -133,8 +139,8 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   f = np.dot(rayV, yAxis)
   if f == 0.0:
     f = epsilon
-  t1 = (e+BBmin[1])/f
-  t2 = (e+BBmax[1])/f
+  t1 = (e+OBBmin[1])/f
+  t2 = (e+OBBmax[1])/f
   if t1 > t2:
     t1, t2 = t2, t1
   tMin = max(tMin, t1)
@@ -147,8 +153,8 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   f = np.dot(rayV, zAxis)
   if f == 0.0:
     f = epsilon
-  t1 = (e+BBmin[2])/f
-  t2 = (e+BBmax[2])/f
+  t1 = (e+OBBmin[2])/f
+  t2 = (e+OBBmax[2])/f
   if t1 > t2:
     t1, t2 = t2, t1
   tMin = max(tMin, t1)
@@ -300,6 +306,8 @@ class Renderable:
     self.glMat()
     if self.visible:
       self.place()
+    if exporting:
+      return
     if ancestorSelected:
       self.placeASel()
     if self in selected:
@@ -313,6 +321,8 @@ class Renderable:
   
   def renderSelectedAE(self):
     '''render after effects for selected'''
+    if exporting:
+      return
     self.glMat()
     if self is monoselected:
       self.placePlanes()
@@ -328,6 +338,8 @@ class Renderable:
     glDisable(GL_LINE_STIPPLE)
 
   def renderOverlay(self):
+    if exporting:
+      return
     self.glMat()
     if self in selected:
       self.placeOrigin()
@@ -633,6 +645,9 @@ class Lamp(Renderable):
   def __copy__(self):
     return Lamp(self.bulb, pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
 
+  def __deepcopy__(self, memo):
+    return copy.copy(self)
+
 class Directory(Renderable):
   # Provides an OpenGL matrix transformation to put other Renderables in
   def __init__(self, rends=None, *args, **kwargs):
@@ -829,9 +844,13 @@ class Scene:
     
     # Push camera position/perspective matrix onto stack
     gluCamera(camera, aspect) # custom convenience function
+    glMatrixMode(GL_MODELVIEW)
+
+    glPushMatrix()
+    glTranslatef(*camera.pos)
     if renderingMode == FLAT:
       gluGlobe() # draw a globe around the camera as a guide when orienting it
-    glMatrixMode(GL_MODELVIEW)
+    glPopMatrix()
 
     # Ambient Light
     ambientColorPower = np.array(self.ambientColor)*self.ambientPower
@@ -872,6 +891,7 @@ class Scene:
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
     rayV = gluUnProject(*XY,1.0)
+    rayV = normalize(rayV)
     
     gluCamera(camera, aspect)
     glMatrixMode(GL_MODELVIEW)
