@@ -34,5 +34,5 @@ from PyQt5.QtOpenGL import *
 
 MAX_LIGHTS = 500
 
-APPNAME = "Renderer"
-APPDATA_FOLDERNAME = "Renderer"
+APPNAME = "ZEdit"
+APPDATA_FOLDERNAME = "ZEdit"

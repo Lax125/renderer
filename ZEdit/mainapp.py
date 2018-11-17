@@ -813,8 +813,8 @@ class MainApp(QMainWindow):
 
   def _make_widgets(self):
     '''Initialise all widgets'''
-    layout = QHBoxLayout()
-    self.setLayout(layout)
+##    layout = QHBoxLayout()
+##    self.setLayout(layout)
     
     bar = self.menuBar()
     file = bar.addMenu("&File")
@@ -851,7 +851,7 @@ class MainApp(QMainWindow):
     scene.addAction(self.sceneMenu_quickgroup)
     render = bar.addMenu("&Render")
     self.renderMenu_fullmode = QAction(self.icons["3D Scene"], "&Full Mode")
-    self.renderMenu_flatmode = QAction(self.icons["Model"], "&Flat Mode")
+    self.renderMenu_flatmode = QAction(self.icons["Model"], "Fl&at Mode")
     render.addAction(self.renderMenu_fullmode)
     render.addAction(self.renderMenu_flatmode)
     view = bar.addMenu("&View")
@@ -930,7 +930,7 @@ class MainApp(QMainWindow):
     self.log.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
     self.logPane.setWidget(self.log)
     self.addDockWidget(Qt.BottomDockWidgetArea, self.logPane)
-    self.logEntry("Info", "Welcome to %s (beta version)"%APPNAME)
+    self.logEntry("Info", "Welcome to %s 1.0.0"%APPNAME)
     self.logEntry("Info", "Pssst...stalk me on GitHub: github.com/Lax125")
 
     self.helpPane = QDockWidget("Help", self)
@@ -1142,7 +1142,7 @@ class MainApp(QMainWindow):
     if base:
       B = Bulb(name="Main Bulb")
       self.add(B)
-      self.add(Lamp(B, name="Main Lamp"))
+      self.add(Lamp(B, pos=Point(0, 1, 0), name="Main Lamp"))
       self.add(Directory(name="Main"))
     self.select(None)
     engine.monoselected = None
