@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 from all_modules import *
 
 from appdata import *
@@ -9,7 +9,8 @@ from asset import Mesh, Tex, Bulb, id_gen
 def castList(types, l):
   casted = [T(a) for T, a in zip(types, l)]
   slack_len = len(types)-len(casted)
-  casted.extend([None]*slack_len)
+  if slack_len:
+    casted.extend([None]*slack_len)
   return casted
 
 def zipdir(path, ziph):
@@ -24,13 +25,22 @@ def unzipdir(ziph, path):
   ziph.extractall(path)
 
 def strPosRot(obj):
-  return " ".join([str(fl) for fl in [*obj.pos, *obj.rot]])
+  return " ".join([repr(fl) for fl in [*obj.pos, *obj.rot]])
 
 def deStrPosRot(s):
   nums = s.split()
   pos = Point(*nums[0:3])
   rot = Rot(*nums[3:6])
   return pos, rot
+
+def strScale(obj):
+  return "\'%s\'"%" ".join([repr(fl) for fl in obj.scale])
+
+def deStrScale(s):
+  scale = np.array([float(fl) for fl in s.split()])
+  if len(scale) == 1:
+    return np.array([scale[0], scale[0], scale[0]])
+  return scale
 
 class Saver:
   def __init__(self, app):
@@ -94,16 +104,16 @@ class Saver:
       def writeRendInfo(rend):
         if type(rend) is Model:
           f.write("model '%s' %d %d %s %s %d\n"%(rend.name, mDict[rend.mesh.ID], tDict[rend.tex.ID],
-                                                 strPosRot(rend), rend.scale,
+                                                 strPosRot(rend), strScale(rend),
                                                  rend.visible))
         elif type(rend) is Lamp:
           f.write("lamp '%s' %d %s %s %d\n"%(rend.name, bDict[rend.bulb.ID],
-                                             strPosRot(rend), rend.scale,
+                                             strPosRot(rend), strScale(rend),
                                              rend.visible))
           
         elif type(rend) is Directory:
           dirDict[rend] = next(dirPlacements)
-          f.write("DIR '%s' %s %s %d\n"%(rend.name, strPosRot(rend), rend.scale, rend.visible))
+          f.write("DIR '%s' %s %s %d\n"%(rend.name, strPosRot(rend), strScale(rend), rend.visible))
           for child in rend.rends:
             writeRendInfo(child)
           f.write("END\n")
@@ -111,7 +121,7 @@ class Saver:
       def writeLinkInfo(rend):
         if type(rend) is Link:
           f.write("SYMLINK '%s' %d %d %s %s %d\n"%(rend.name, dirDict[rend.parent], dirDict[rend.directory],
-                                                   strPosRot(rend), rend.scale, rend.visible))
+                                                   strPosRot(rend), strScale(rend), rend.visible))
         elif type(rend) is Directory:
           for child in rend.rends:
             writeLinkInfo(child)
@@ -162,7 +172,7 @@ class Saver:
     directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
     dirStack = [None]
     for line in dataopen("tmp/blueprint.dat", "r"):
-      print(line, end="")
+##      print(line, end="")
       words = shlex.split(line)
       if not words:
         continue
@@ -207,7 +217,8 @@ class Saver:
 
       elif command == "model":
         name, meshIndex, texIndex, x,y,z,rx,ry,rz, scale, visible\
-          = castList([str, int, int, *[float]*6, float, int], args)
+          = castList([str, int, int, *[float]*6, str, int], args)
+        scale = deStrScale(scale)
         new_model = Model(meshes[meshIndex], textures[texIndex],
                           pos=Point(x,y,z), rot=Rot(rx,ry,rz),
                           scale=scale, visible=visible,
@@ -216,7 +227,8 @@ class Saver:
 
       elif command == "lamp":
         name, bulbIndex, x,y,z,rx,ry,rz, scale, visible\
-          = castList([str, int, *[float]*6, float, int], args)
+          = castList([str, int, *[float]*6, str, int], args)
+        scale = deStrScale(scale)
         new_lamp = Lamp(bulbs[bulbIndex],
                         pos=Point(x,y,z), rot=Rot(rx,ry,rz),
                         scale=scale, visible=visible,
@@ -225,7 +237,8 @@ class Saver:
 
       elif command == "DIR":
         name, x,y,z,rx,ry,rz, scale, visible\
-          = castList([str, *[float]*6, float, int], args)
+          = castList([str, *[float]*6, str, int], args)
+        scale = deStrScale(scale)
         new_directory = Directory(pos=Point(x,y,z), rot=Rot(rx,ry,rz), scale=scale, visible=visible, name=name)
         self.app.add(new_directory)
         directories.append(new_directory)
@@ -238,8 +251,9 @@ class Saver:
 
       elif command == "SYMLINK":
         name, fromIndex, toIndex, x,y,z,rx,ry,rz, scale, visible\
-          = castList([str, int, int, *[float]*6, float, int], args)
-        new_symlink = Link(directories[toIndex], pos=Point(x,y,z), rot=Rot(rx,ry,rz), visible=visible, name=name)
+          = castList([str, int, int, *[float]*6, str, int], args)
+        scale = deStrScale(scale)
+        new_symlink = Link(directories[toIndex], pos=Point(x,y,z), rot=Rot(rx,ry,rz), scale=scale, visible=visible, name=name)
         self.app.add(new_symlink, directory=directories[fromIndex])
 
       elif command == "cam":

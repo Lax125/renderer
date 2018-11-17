@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 '''
 rotpoint.py
 describes positioning and rotation of cameras and models
