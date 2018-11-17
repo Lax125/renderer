@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 '''
@@ -17,6 +17,13 @@ import engine
 from userenv import UserEnv
 from remote import Remote
 from saver import Saver
+
+PRECISION = 4
+EPSILON = 10**-PRECISION
+B32 = 2147483648
+
+def nonzero(fl):
+  return EPSILON if fl == 0.0 else fl
 
 def basePosRot(truePos, trueRot, sel):
   if not isinstance(sel, Renderable):
@@ -121,6 +128,13 @@ class BetterSlider(QWidget):
   def blockSignals(self, doBlock):
     self.blocking = doBlock
 
+class WidgetRow(QWidget):
+  def __init__(self, widgets):
+    super().__init__()
+    L = QHBoxLayout()
+    for widget in widgets:
+      L.addWidget(widget)
+    self.setLayout(L)
 
 class InteractiveGLWidget(QGLWidget):
   '''OpenGL+QT widget'''
@@ -283,7 +297,7 @@ class InteractiveGLWidget(QGLWidget):
         selpos = Point(0, 0, 0)
       dx0, dy0, dz0 = cam.pos - selpos
       dist0 = (dx0**2+dy0**2+dz0**2)**0.5
-      dist = min(max(0.1, dist0*10**(-event.angleDelta().y()/(360*10))), 2147483647.0)
+      dist = min(max(0.1, dist0*10**(-event.angleDelta().y()/(360*10))), B32-1)
       cam.pos = selpos - (cam.rot.get_forward_vector(invert=True)*dist)
       self.sel_dr = dist
     else:
@@ -860,7 +874,7 @@ class MainApp(QMainWindow):
     self.glDSF.setLayout(self.glDSFLayout)
     self.setCentralWidget(self.glDSF)
     self.glDSF.setOffset(QPoint(0,0))
-    self.glDSF.setColor(qtifyColor("#ffd700"))
+    self.glDSF.setColor(qtifyColor("#ffff30"))
     self.glDSF.setRadius(10)
     self.glDSF.setProperty("class", "DarkTheme")
     
@@ -1348,20 +1362,25 @@ class MainApp(QMainWindow):
     basepos, baserot = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
     baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
-    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
-    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
-    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basex)
+    y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basey)
+    z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basez)
     rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserx), suffix="°")
     ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=basery), suffix="°")
     rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserz), suffix="°")
-    scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
+    sx = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+    sy = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+    sz = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+##    scale = WidgetRow([sx, sy, sz])
     poseLayout.addRow("x", x)
     poseLayout.addRow("y", y)
     poseLayout.addRow("z", z)
     poseLayout.addRow("Yaw", ry)
     poseLayout.addRow("Pitch", rx)
     poseLayout.addRow("Roll", rz)
-    poseLayout.addRow("scale", scale)
+    poseLayout.addRow("Scale x", sx)
+    poseLayout.addRow("Scale y", sy)
+    poseLayout.addRow("Scale z", sz)
 
     # CUSTOMISATION GROUP BOX
     custBox = QGroupBox("Customization")
@@ -1388,7 +1407,7 @@ class MainApp(QMainWindow):
       pos = Point(xv, yv, zv)
       rot = Rot(pi*rx.value()/180, pi*ry.value()/180, pi*rz.value()/180)
       model = Model(mesh, tex,
-                    pos=pos, rot=rot, scale=scale.value(),
+                    pos=pos, rot=rot, scale=np.array([sx.value(), sy.value(), sz.value()]),
                     name=name.text())
       self.add(model)
       self.select(model)
@@ -1434,9 +1453,9 @@ class MainApp(QMainWindow):
     poseBox.setLayout(poseLayout)
     basepos, _ = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
-    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
-    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
-    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basex)
+    y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basey)
+    z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basez)
     poseLayout.addRow("x", x)
     poseLayout.addRow("y", y)
     poseLayout.addRow("z", z)
@@ -1497,13 +1516,16 @@ class MainApp(QMainWindow):
     basepos, baserot = basePosRot(self.remote.getCamera().pos, self.remote.getCamera().rot, engine.monoselected)
     basex, basey, basez = basepos
     baserx, basery, baserz = [cyclamp(r*180/pi, (-180, 180)) for r in baserot]
-    x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basex)
-    y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basey)
-    z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647, value=basez)
+    x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basex)
+    y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basey)
+    z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=basez)
     rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserx), suffix="°")
     ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=basery), suffix="°")
     rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180, value=baserz), suffix="°")
-    scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, value=1, singleStep=0.05)
+    sx = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sy = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sz = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    scale = WidgetRow([sx, sy, sz])
     poseLayout.addRow("x", x)
     poseLayout.addRow("y", y)
     poseLayout.addRow("z", z)
@@ -1529,7 +1551,7 @@ class MainApp(QMainWindow):
       xv, yv, zv = x.value(), y.value(), z.value()
       pos = Point(xv, yv, zv)
       rot = Rot(pi*rx.value()/180, pi*ry.value()/180, pi*rz.value()/180)
-      group = Directory(pos=pos, rot=rot, scale=scale.value(),
+      group = Directory(pos=pos, rot=rot, scale=np.array([sx.value(), sy.value(), sz.value()]),
                         name=name.text())
       self.add(group)
       dx = xv - lastx
@@ -1572,7 +1594,7 @@ class MainApp(QMainWindow):
 
     heading = QLabel("Scene", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     ambientColor = self.sceneEdit_ambientColor = QLineEdit(readOnly=True)
-    ambientPower = self.sceneEdit_ambientPower = QDoubleSpinBox(minimum=0.0, maximum=1.0, singleStep=0.01)
+    ambientPower = self.sceneEdit_ambientPower = QDoubleSpinBox(decimals=PRECISION, minimum=0.0, maximum=1.0, singleStep=0.01)
     recolorAmbient = self.sceneEdit_recolorAmbient = QPushButton(text="Recolor Ambient", icon=self.icons["Color"])
 
     ambientBox = QGroupBox("Ambient Light")
@@ -1597,14 +1619,14 @@ class MainApp(QMainWindow):
     self.camEdit.setLayout(L)
 
     heading = QLabel("Camera", font=self.fonts["heading"], alignment=Qt.AlignCenter)
-    x = self.camEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.camEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.camEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    x = self.camEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    y = self.camEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    z = self.camEdit_z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     rx = self.camEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     ry = self.camEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     rz = self.camEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
-    fovy = self.camEdit_fovy = QDoubleSpinBox(minimum=0.05, maximum=179.95, value=60, singleStep=0.05)
-    zoom = self.camEdit_zoom = QDoubleSpinBox(minimum=1.0, maximum=1000.0, value=1, singleStep=0.05)
+    fovy = self.camEdit_fovy = QDoubleSpinBox(decimals=PRECISION, minimum=0.05, maximum=179.95, value=60, singleStep=0.05)
+    zoom = self.camEdit_zoom = QDoubleSpinBox(decimals=PRECISION, minimum=1.0, maximum=1000.0, value=1, singleStep=0.05)
     for setting in [x, y, z, rx, ry, rz, fovy, zoom]:
       setting.valueChanged.connect(self.updateCamera)
     L.addWidget(heading)
@@ -1649,7 +1671,7 @@ class MainApp(QMainWindow):
     diffuse = self.texEdit_diffuse = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
     specular = self.texEdit_specular = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
     fresnel = self.texEdit_fresnel = BetterSlider(QSlider(Qt.Horizontal, minimum=0, maximum=100))
-    shininess = self.texEdit_shininess = QDoubleSpinBox(minimum=1, maximum=2147483647)
+    shininess = self.texEdit_shininess = QDoubleSpinBox(decimals=PRECISION, minimum=1, maximum=B32-1)
     for setting in diffuse, specular, fresnel, shininess:
       setting.valueChanged.connect(self.updateSelected)
     change = QPushButton(text="Change Image", icon=self.icons["File"])
@@ -1681,7 +1703,7 @@ class MainApp(QMainWindow):
     heading = QLabel("Bulb", font=self.fonts["heading"], alignment=Qt.AlignCenter)
     name = self.bulbEdit_name = QLineEdit()
     color = self.bulbEdit_color = QLineEdit(readOnly=True)
-    power = self.bulbEdit_power = QDoubleSpinBox(minimum=0, maximum=2147483647)
+    power = self.bulbEdit_power = QDoubleSpinBox(decimals=PRECISION, minimum=0, maximum=B32-1)
     change = QPushButton(text="Change Color", icon=self.icons["Color"])
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     name.textChanged.connect(self.updateSelected)
@@ -1746,13 +1768,16 @@ class MainApp(QMainWindow):
     name = self.modelEdit_name = QLineEdit()
     change = QPushButton(text="Change Assets", icon=self.icons["Form"])
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
-    x = self.modelEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.modelEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.modelEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    x = self.modelEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    y = self.modelEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    z = self.modelEdit_z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     rx = self.modelEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     ry = self.modelEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     rz = self.modelEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
-    scale = self.modelEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
+    sx = self.modelEdit_sx = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sy = self.modelEdit_sy = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sz = self.modelEdit_sz = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+##    scale = WidgetRow([sx, sy, sz])
     visible = self.modelEdit_visible = QCheckBox(text="Visible", tristate=False)
     mesh = self.modelEdit_mesh = QPushButton()
     tex = self.modelEdit_tex = QPushButton()
@@ -1772,7 +1797,9 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Yaw", ry)
     poseLayout.addRow("Pitch", rx)
     poseLayout.addRow("Roll", rz)
-    poseLayout.addRow("Scale", scale)
+    poseLayout.addRow("Scale x", sx)
+    poseLayout.addRow("Scale y", sy)
+    poseLayout.addRow("Scale z", sz)
 
     sceneBox = QGroupBox("Scene")
     L.addWidget(sceneBox)
@@ -1792,7 +1819,7 @@ class MainApp(QMainWindow):
     L.addWidget(change)
     L.addWidget(delete)
 
-    for setting in [x,y,z, rx,ry,rz, scale]:
+    for setting in [x,y,z, rx,ry,rz, sx,sy,sz]:
       setting.valueChanged.connect(self.updateSelected)
 
     def selectMesh():
@@ -1823,9 +1850,9 @@ class MainApp(QMainWindow):
     name = self.lampEdit_name = QLineEdit()
     change = self.lampEdit_change = QPushButton(text="Change Assets", icon=self.icons["Form"])
     delete = self.lampEdit_delete = QPushButton(text="Delete", icon=self.icons["Delete"])
-    x = self.lampEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.lampEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.lampEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    x = self.lampEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    y = self.lampEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    z = self.lampEdit_z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     visible = self.lampEdit_visible = QCheckBox(text="Visible", tristate=False)
     bulb = self.lampEdit_bulb = QPushButton()
 
@@ -1881,13 +1908,16 @@ class MainApp(QMainWindow):
 
     name = self.dirEdit_name = QLineEdit()
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
-    x = self.dirEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.dirEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.dirEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    x = self.dirEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    y = self.dirEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    z = self.dirEdit_z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     rx = self.dirEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     ry = self.dirEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     rz = self.dirEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
-    scale = self.dirEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
+    sx = self.dirEdit_sx = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+    sy = self.dirEdit_sy = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+    sz = self.dirEdit_sz = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=0.05)
+##    scale = WidgetRow([sx, sy, sz])
     visible = self.dirEdit_visible = QCheckBox(text="Visible", tristate=False)
     
     L.addWidget(heading)
@@ -1905,7 +1935,9 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Yaw", ry)
     poseLayout.addRow("Pitch", rx)
     poseLayout.addRow("Roll", rz)
-    poseLayout.addRow("Scale", scale)
+    poseLayout.addRow("Scale x", sx)
+    poseLayout.addRow("Scale y", sy)
+    poseLayout.addRow("Scale z", sz)
 
     sceneBox = QGroupBox("Scene")
     L.addWidget(sceneBox)
@@ -1916,7 +1948,7 @@ class MainApp(QMainWindow):
     delete.clicked.connect(self.deleteSelected)
     L.addWidget(delete)
 
-    for setting in [x,y,z, rx,ry,rz, scale]:
+    for setting in [x,y,z, rx,ry,rz, sx, sy, sz]:
       setting.valueChanged.connect(self.updateSelected)
 
     visible.stateChanged.connect(self.updateSelected)
@@ -1932,13 +1964,16 @@ class MainApp(QMainWindow):
 
     name = self.linkEdit_name = QLineEdit()
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
-    x = self.linkEdit_x = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    y = self.linkEdit_y = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
-    z = self.linkEdit_z = QDoubleSpinBox(minimum=-2147483648, maximum=2147483647)
+    x = self.linkEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    y = self.linkEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
+    z = self.linkEdit_z = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     rx = self.linkEdit_rx = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     ry = self.linkEdit_ry = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
     rz = self.linkEdit_rz = BetterSlider(QSlider(Qt.Horizontal, tickPosition=1, tickInterval=90, minimum=-180, maximum=180), suffix="°")
-    scale = self.linkEdit_scale = QDoubleSpinBox(minimum=0.05, maximum=2147483647, singleStep=0.05)
+    sx = self.linkEdit_sx = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sy = self.linkEdit_sy = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+    sz = self.linkEdit_sz = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1, value=1, singleStep=1)
+##    scale = WidgetRow([sx, sy, sz])
     visible = self.linkEdit_visible = QCheckBox(text="Visible", tristate=False)
     
     L.addWidget(heading)
@@ -1956,7 +1991,9 @@ class MainApp(QMainWindow):
     poseLayout.addRow("Yaw", ry)
     poseLayout.addRow("Pitch", rx)
     poseLayout.addRow("Roll", rz)
-    poseLayout.addRow("Scale", scale)
+    poseLayout.addRow("Scale x", sx)
+    poseLayout.addRow("Scale y", sy)
+    poseLayout.addRow("Scale z", sz)
 
     sceneBox = QGroupBox("Scene")
     L.addWidget(sceneBox)
@@ -1967,7 +2004,7 @@ class MainApp(QMainWindow):
     delete.clicked.connect(self.deleteSelected)
     L.addWidget(delete)
 
-    for setting in [x,y,z, rx,ry,rz, scale]:
+    for setting in [x,y,z, rx,ry,rz, sx,sy,sz]:
       setting.valueChanged.connect(self.updateSelected)
 
     visible.stateChanged.connect(self.updateSelected)
@@ -2144,7 +2181,15 @@ class MainApp(QMainWindow):
 
   def delete(self, obj):
     '''Deletes object (Mesh, Tex, Model, or Lamp) from user environment, ui list, and file cache and deselects it'''
-    # Remove from list
+    # delete any links to the obj
+    links = []
+    if isinstance(obj, Directory):
+      for link in self.remote.getLinksTo(obj):
+        links.append(link)
+    for link in links:
+      self.delete(link)
+
+    # Remove from list/tree
     if isinstance(obj, Renderable):
       self.rendTree.delete(obj)
     listDict = {Mesh: self.meshList,
@@ -2155,6 +2200,7 @@ class MainApp(QMainWindow):
     if type(obj) in listDict:
       l = listDict[type(obj)]
       l.take(obj)
+      
     self.remote.delete(obj)
     # Deselect object
     engine.selected.discard(obj)
@@ -2253,7 +2299,9 @@ class MainApp(QMainWindow):
       S.rot = Rot(pi*self.modelEdit_rx.value()/180,
                   pi*self.modelEdit_ry.value()/180,
                   pi*self.modelEdit_rz.value()/180)
-      S.scale = self.modelEdit_scale.value()
+      S.scale = np.array([nonzero(self.modelEdit_sx.value()),
+                          nonzero(self.modelEdit_sy.value()),
+                          nonzero(self.modelEdit_sz.value())])
       S.visible = self.modelEdit_visible.isChecked()
       self.modelList.update()
       self.rendTree.update()
@@ -2275,7 +2323,9 @@ class MainApp(QMainWindow):
       S.rot = Rot(pi*self.dirEdit_rx.value()/180,
                   pi*self.dirEdit_ry.value()/180,
                   pi*self.dirEdit_rz.value()/180)
-      S.scale = self.dirEdit_scale.value()
+      S.scale = np.array([nonzero(self.dirEdit_sx.value()),
+                          nonzero(self.dirEdit_sy.value()),
+                          nonzero(self.dirEdit_sz.value())])
       S.visible = self.dirEdit_visible.isChecked()
       self.rendTree.update()
 
@@ -2287,7 +2337,9 @@ class MainApp(QMainWindow):
       S.rot = Rot(pi*self.linkEdit_rx.value()/180,
                   pi*self.linkEdit_ry.value()/180,
                   pi*self.linkEdit_rz.value()/180)
-      S.scale = self.linkEdit_scale.value()
+      S.scale = np.array([nonzero(self.linkEdit_sx.value()),
+                          nonzero(self.linkEdit_sy.value()),
+                          nonzero(self.linkEdit_sz.value())])
       S.visible = self.linkEdit_visible.isChecked()
       self.rendTree.update()
       
@@ -2379,7 +2431,7 @@ class MainApp(QMainWindow):
       x, y, z = S.pos
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
-      scale = S.scale
+      sx, sy, sz = S.scale
       visible = S.visible
       mesh = S.mesh.name
       tex = S.tex.name
@@ -2395,7 +2447,9 @@ class MainApp(QMainWindow):
                            (self.modelEdit_rx, rx),
                            (self.modelEdit_ry, ry),
                            (self.modelEdit_rz, rz),
-                           (self.modelEdit_scale, scale)]:
+                           (self.modelEdit_sx, sx),
+                           (self.modelEdit_sy, sy),
+                           (self.modelEdit_sz, sz)]:
         setting.blockSignals(True)
         setting.setValue(var)
         setting.blockSignals(False)
@@ -2442,7 +2496,7 @@ class MainApp(QMainWindow):
       x, y, z = S.pos
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
-      scale = S.scale
+      sx, sy, sz = S.scale
       visible = S.visible
       
       for setting, text in [(self.dirEdit_name, name)]:
@@ -2456,7 +2510,9 @@ class MainApp(QMainWindow):
                            (self.dirEdit_rx, rx),
                            (self.dirEdit_ry, ry),
                            (self.dirEdit_rz, rz),
-                           (self.dirEdit_scale, scale)]:
+                           (self.dirEdit_sx, sx),
+                           (self.dirEdit_sy, sy),
+                           (self.dirEdit_sz, sz)]:
         setting.blockSignals(True)
         setting.setValue(var)
         setting.blockSignals(False)
@@ -2473,7 +2529,7 @@ class MainApp(QMainWindow):
       x, y, z = S.pos
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
-      scale = S.scale
+      sx, sy, sz = S.scale
       visible = S.visible
       
       for setting, text in [(self.linkEdit_name, name)]:
@@ -2487,7 +2543,9 @@ class MainApp(QMainWindow):
                            (self.linkEdit_rx, rx),
                            (self.linkEdit_ry, ry),
                            (self.linkEdit_rz, rz),
-                           (self.linkEdit_scale, scale)]:
+                           (self.linkEdit_sx, sx),
+                           (self.linkEdit_sy, sy),
+                           (self.linkEdit_sz, sz)]:
         setting.blockSignals(True)
         setting.setValue(var)
         setting.blockSignals(False)

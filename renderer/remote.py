@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 '''
 remote.py
 
@@ -79,10 +79,22 @@ class Remote:
       directory.add(rend)
     return has_rend
 
+  def rendExists(self, rend):
+    return self.userenv.scene.rendExists(rend)
+
   def delRend(self, rend):
     '''Deletes rend from userenv's scene'''
     rend.setParent(None)
     self.userenv.scene.discard(rend)
+
+  def getLinksTo(self, directory, curDir=None): # recursively gets links to directory from curDir
+    if curDir is None:
+      curDir = self.userenv.scene
+    for rend in curDir:
+      if isinstance(rend, Link) and rend.directory is directory:
+        yield rend
+      elif isinstance(rend, Directory):
+        yield from self.getLinksTo(directory, curDir=rend)
 
   def add(self, obj, directory=None):
     if isinstance(obj, Asset):

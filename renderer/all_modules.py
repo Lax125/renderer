@@ -1,4 +1,8 @@
-#!/usr/bin/python
+#!/usr/bin/env python
+def debug(msg):
+    with open("debug.log", 'a') as f:
+        f.write(msg+'\n')
+import traceback
 import sys, os
 import shutil
 import shlex
@@ -6,7 +10,6 @@ import zipfile
 import ctypes
 import numpy as np
 import copy
-import traceback
 from math import sin, cos, tan, atan, atan2, pi, tau, degrees, radians, hypot, floor, ceil, sqrt
 from itertools import chain
 from collections import defaultdict as ddict

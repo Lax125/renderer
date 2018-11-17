@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 '''
 engine.py
 describes 3-D scenes and it's rendering process
@@ -20,6 +20,8 @@ from rotpoint import Point, Rot
 from shader import *
 from asset import id_gen
 
+EPSILON = abs(0.3 - 0.1 - 0.1 - 0.1)
+
 # FOR LOGGING
 FORMAT = '%(asctime)-15s %(clientip)s %(user)-8s %(message)s'
 logging.basicConfig(format=FORMAT)
@@ -36,6 +38,7 @@ highlighted = None
 clipboard = None
 camPos = None
 camTrueFovy = None
+linkDepth = 0
 
 def mix_permute(A, B):
   if len(A) == 0 or len(B) == 0:
@@ -53,15 +56,12 @@ def glGetModelview(): # convenience: get modelview matrix
   return glGetFloatv(GL_MODELVIEW_MATRIX)
 
 def glGetModelviewPos():
-  M = glGetModelview()
-  return np.array([M[3,0], M[3,1], M[3,2]])
+  A = np.array(glGetModelview())
+  return np.array(A[3,0:3])
 
 def glGetModelviewAxes():
-  M = glGetModelview()
-  xAxis = normalize(np.array([M[0,0], M[0,1], M[0,2]]))
-  yAxis = normalize(np.array([M[1,0], M[1,1], M[1,2]]))
-  zAxis = normalize(np.array([M[2,0], M[2,1], M[2,2]]))
-  return xAxis, yAxis, zAxis
+  A = np.array(glGetModelview())
+  return A[0,0:3], A[1,0:3], A[2,0:3]
 
 def glApplyRot(rot, invert=False):
   rx, ry, rz = rot
@@ -73,10 +73,6 @@ def glApplyRot(rot, invert=False):
     glRotate(-degrees(-rz), 0.0, 0.0, 1.0)
     glRotate(-degrees(rx), 1.0, 0.0, 0.0)
     glRotate(-degrees(-ry), 0.0, 1.0, 0.0)
-
-def glGetScale():
-  A = np.array(glGetModelview())
-  return (A[0,0]**2 + A[1,0]**2 + A[2,0]**2)**0.5
 
 def gluGlobe():
   glMatrixMode(GL_MODELVIEW)
@@ -106,25 +102,22 @@ def gluCamera(camera, aspect):
 def testRayBBIntersection(rayV, BBmin, BBmax):
   '''Test if a ray from modelview origin intersects a bounding box in current modelview matrix. Returns the distance if they instersect and None they do not.'''
   ## credit: http://www.opengl-tutorial.org/miscellaneous/clicking-on-objects/picking-with-custom-ray-obb-function/
-  epsilon = abs(3*0.1 - 0.1 - 0.1 - 0.1)
   tMin = 0.0 # the length of the ray if it were cut off by the closest side of the BBox
   tMax = 10000000.0 # the length of the ray if it were cut off by the farthest side of the BBox
   dPos = glGetModelviewPos()
 
-  scale = glGetScale()
-  OBBmin = BBmin*scale
-  OBBmax = BBmax*scale
-##  OBBmin = np.array([-1,-1,-1])
-##  OBBmax = np.array([ 1, 1, 1])
-
-  # TEST ALL AXES
-  xAxis, yAxis, zAxis = glGetModelviewAxes()
+  axes = xAxis, yAxis, zAxis = glGetModelviewAxes()
+  xScale, yScale, zScale = (np.linalg.norm(axis) for axis in axes)
+  scale = np.array([xScale, yScale, zScale])
+  OBBmin = np.array(BBmin)*scale
+  OBBmax = np.array(BBmax)*scale
+  xAUnit, yAUnit, zAUnit = (axis/(EPSILON if AS == 0.0 else AS) for axis, AS in zip(axes, scale))
   
   # x
-  e = np.dot(xAxis, dPos)
-  f = np.dot(rayV, xAxis)
+  e = np.dot(xAUnit, dPos)
+  f = np.dot(rayV, xAUnit)
   if f == 0.0:
-    f = epsilon
+    f = EPSILON
   t1 = (e+OBBmin[0])/f
   t2 = (e+OBBmax[0])/f
   if t1 > t2:
@@ -135,10 +128,10 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
     return None # no intersection
 
   # y
-  e = np.dot(yAxis, dPos)
-  f = np.dot(rayV, yAxis)
+  e = np.dot(yAUnit, dPos)
+  f = np.dot(rayV, yAUnit)
   if f == 0.0:
-    f = epsilon
+    f = EPSILON
   t1 = (e+OBBmin[1])/f
   t2 = (e+OBBmax[1])/f
   if t1 > t2:
@@ -149,10 +142,10 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
     return None # no intersection
 
   # z
-  e = np.dot(zAxis, dPos)
-  f = np.dot(rayV, zAxis)
+  e = np.dot(zAUnit, dPos)
+  f = np.dot(rayV, zAUnit)
   if f == 0.0:
-    f = epsilon
+    f = EPSILON
   t1 = (e+OBBmin[2])/f
   t2 = (e+OBBmax[2])/f
   if t1 > t2:
@@ -190,7 +183,7 @@ class Renderable:
 ##  IDs = id_gen(1)
 ##  rendDict = dict()
   
-  def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=1.0, visible=True, name="renderable0"):
+  def __init__(self, pos=Point(0, 0, 0), rot=Rot(0, 0, 0), scale=np.array([1.0, 1.0, 1.0]), visible=True, name="renderable0"):
 ##    self.ID = next(Renderable.IDs)
 ##    Renderable.rendDict[self.ID] = self
     self.parent = None
@@ -216,9 +209,9 @@ class Renderable:
       glApplyRot(self.rot)
 
       # SCALE
-      glScalef(self.scale, self.scale, self.scale)
+      glScalef(self.scale[0], self.scale[1], self.scale[2])
     else:
-      glScalef(1/self.scale, 1/self.scale, 1/self.scale)
+      glScalef(1/self.scale[0], 1/self.scale[1], 1/self.scale[2])
       glApplyRot(self.rot, invert=True)
       glTranslatef(*-self.pos)
 
@@ -314,7 +307,7 @@ class Renderable:
       self.placeSel()
     if self is highlighted:
       self.placeHighlight()
-    if self is monoselected:
+    if self is monoselected and linkDepth == 0:
       self.placeAxes()
       self.placeMonosel()
   
@@ -340,7 +333,7 @@ class Renderable:
     if exporting:
       return
     self.glMat()
-    if self in selected or self is highlighted:
+    if self is highlighted:
       self.placeOrigin()
 
   def _setParent(self, parent):
@@ -563,7 +556,7 @@ class Model(Renderable):
 
   def __copy__(self):
     # all attributes are immutable
-    return Model(self.mesh, self.tex, pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
+    return Model(self.mesh, self.tex, pos=self.pos, rot=self.rot, scale=self.scale.copy(), visible=self.visible, name=self.name)
 
   def __deepcopy__(self, memo):
     return copy.copy(self) # i am a dead end
@@ -578,7 +571,10 @@ class Model(Renderable):
       self.mesh.render_wireframe()
       FLAT_SHADER.use()
     glColor4f(1.0, 1.0, 1.0, 1.0)
+    if np.prod(self.scale) < 0.0:
+      glFrontFace(GL_CW)
     self.mesh.render(self.tex)
+    glFrontFace(GL_CCW)
 
   def placeASel(self):
     PLAIN_SHADER.use()
@@ -642,7 +638,7 @@ class Lamp(Renderable):
       gluSphere(gluNewQuadric(), 1, 25, 25)
 
   def __copy__(self):
-    return Lamp(self.bulb, pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
+    return Lamp(self.bulb, pos=self.pos, rot=self.rot, scale=self.scale.copy(), visible=self.visible, name=self.name)
 
   def __deepcopy__(self, memo):
     return copy.copy(self)
@@ -662,7 +658,7 @@ class Directory(Renderable):
     return Link(self)
 
   def __deepcopy__(self, memo):
-    directory = Directory(pos=self.pos, rot=self.rot, scale=self.scale, visible=self.visible, name=self.name)
+    directory = Directory(pos=self.pos, rot=self.rot, scale=self.scale.copy(), visible=self.visible, name=self.name)
     for rend in self.rends:
       directory.add(copy.deepcopy(rend))
     return directory
@@ -761,14 +757,28 @@ class Link(Renderable): # TODO: more overloads
   def __deepcopy__(self, memo):
     return copy.copy(self)
 
+  def renderLight(self):
+    super().renderLight()
+    for rend in self.directory.rends:
+      glPushMatrix()
+      rend.renderLight()
+      glPopMatrix()
+
   def render(self, ancestorSelected=False):
+    if self.directory in selected:
+      selected.add(self)
     super().render(ancestorSelected=ancestorSelected)
+    if self in selected:
+      ancestorSelected = True
     if not self.visible:
       return
+    global linkDepth
+    linkDepth += 1
     for rend in self.directory.rends:
       glPushMatrix()
       rend.render(ancestorSelected=ancestorSelected)
       glPopMatrix()
+    linkDepth -= 1
 
   def renderSelectedAE(self):
     super().renderSelectedAE()
@@ -785,9 +795,13 @@ class Link(Renderable): # TODO: more overloads
       glPopMatrix()
 
   def update_bbox(self):
-    self.minPoint = self.directory.minPoint
-    self.maxPoint = self.directory.maxPoint
+    self.directory.update_bbox()
+    self.minPoint = Point(0, 0, 0)
+    self.maxPoint = Point(0, 0, 0)
     super().update_bbox()
+
+  def placeBBox(self):
+    self.directory.placeBBox()
 
   def cycleCheckChildren(self):
     return self.directory.rends
@@ -856,6 +870,9 @@ class Scene:
     PHONG_SHADER.use()
     glUniform3f(Shader.current.uniformLocs["ambientColorPower"], *ambientColorPower)
 
+    global linkDepth
+    linkDepth = 0
+    
     Lamp.begin()
     for rend in self.rends:
       glPushMatrix()
@@ -905,6 +922,16 @@ class Scene:
       glPopMatrix()
 
     return result
+
+  def rendExists(self, rend):
+    def test(r):
+      if r == rend:
+        return True
+      elif isinstance(r, Directory):
+        return any(test(child) for child in r)
+      else:
+        return False
+    return any(test(r) for r in self.rends)
 
   def debug_tree(self):
     def tree(rend):
