@@ -12,3 +12,4 @@ def run():
   os.chdir(cwd)
   
     
+run()

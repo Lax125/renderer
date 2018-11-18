@@ -31,7 +31,7 @@ def run(*args, **kwargs):
     debug("App constructed.")
     app.restoreProject()
     debug("Startup sequence completed.")
-    sys.exit(window.exec_())
+    window.exec_()
     debug("Application exited normally.")
 
 if __name__ == "__main__": # MAIN ENTRY POINT
