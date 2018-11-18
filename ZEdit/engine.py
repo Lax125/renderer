@@ -135,6 +135,11 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   origin_rel = np.array(xyz1).flatten()[0:3]
   if (BBmin < origin_rel).all() and (origin_rel < BBmax).all():
     return None
+  dMin = 0.0
+  dMax = float('Inf')
+  rayV_rel = np.array(np.matrix([*rayV, 1.0])*invertedModelview).flatten()[0:3] - origin_rel
+##  print()
+##  print(origin_rel, rayV_rel)
   # test all axes
   def extrapolateDistance(xyz, dxyz, axis, n):
     if dxyz[axis] == 0:
