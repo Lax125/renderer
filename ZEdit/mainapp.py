@@ -385,9 +385,11 @@ class ObjList(QListWidget):
     self.onItemSelectionChanged()
 
   def onItemDoubleClicked(self, item):
-    if isinstance(item.obj, Renderable):
+    if isinstance(item.obj, Link):
+      self.requestSelect.emit(item.obj.directory)
+    elif isinstance(item.obj, Renderable):
       self.requestLookAt.emit(item.obj)
-      self.update()
+      self.requestUpdate.emit()
 
   def onItemSelectionChanged(self):
     items = self.selectedItems()
@@ -511,6 +513,8 @@ class ObjTree(QTreeWidget):
     self.itemDoubleClicked.connect(self.onItemDoubleClicked)
     self.itemChanged.connect(self.onItemChanged)
     self.itemSelectionChanged.connect(self.onItemSelectionChanged)
+    self.itemEntered.connect(self.onItemEntered)
+    self.setMouseTracking(True)
     self.setSortingEnabled(True)
     
   def add(self, obj, directory=None):
@@ -595,8 +599,11 @@ class ObjTree(QTreeWidget):
       self.requestMove.emit(item.obj, self.getCurrentDir())
 
   def onItemDoubleClicked(self, item):
-    if isinstance(item.obj, Renderable):
+    if isinstance(item.obj, Link):
+      self.requestSelect.emit(item.obj.directory)
+    elif isinstance(item.obj, Renderable):
       self.requestLookAt.emit(item.obj)
+      self.requestUpdate.emit()
 
   def onItemChanged(self, item):
     if isinstance(item.obj, Renderable):
@@ -607,6 +614,10 @@ class ObjTree(QTreeWidget):
     selItems = self.selectedItems()
     if selItems:
       self.requestSelect.emit(selItems[0].obj)
+
+  def onItemEntered(self, item):
+    engine.highlighted = item.obj
+    self.requestUpdate.emit()
 
   def keyPressEvent(self, event):
     selItems = self.selectedItems()
@@ -650,6 +661,13 @@ class ObjTree(QTreeWidget):
     else:
       self.itemDragged = self.itemAt(event.pos())
       super().mousePressEvent(event)
+
+  def mouseMoveEvent(self, event):
+    index = self.indexAt(event.pos())
+    if index.row() == -1:
+      engine.highlighted = None
+      self.requestUpdate.emit()
+    super().mouseMoveEvent(event)
 
   def mouseReleaseEvent(self, event):
     self.itemDragged = None
@@ -2239,6 +2257,7 @@ class MainApp(QMainWindow):
 
   def copySelected(self):
     engine.clipboard = engine.monoselected
+    self.logEntry("Success", "Copied %s."%engine.monoselected.name)
 
   def shallowPaste(self, obj):
     cam = self.remote.getCamera()
@@ -2250,6 +2269,8 @@ class MainApp(QMainWindow):
         self.add(sCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
+      else:
+        self.logEntry("Success", "Deep pasted %s."%obj.name)
 
   def deepPaste(self, obj):
     cam = self.remote.getCamera()
@@ -2261,6 +2282,8 @@ class MainApp(QMainWindow):
         self.add(dCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
+      else:
+        self.logEntry("Success", "Deep pasted %s."%obj.name)
 
   def shallowPasteClipboard(self):
     self.shallowPaste(engine.clipboard)
