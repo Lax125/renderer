@@ -17,7 +17,7 @@ with open("README.md", 'r') as fh:
 # make distribution for submission to PyPi
 setuptools.setup(
   name="ZEdit",
-  version="1.1.0",
+  version="1.1.1",
   author="Marcus Koh",
   author_email="marcuskoh29@gmail.com",
   description="A simple 3-D rendering engine and editor",
@@ -28,6 +28,12 @@ setuptools.setup(
   package_data={
     "ZEdit": ["*.txt", "*.obj", "*.png", "*.qss", "*.glsl"]
   },
+  python_requires=">=3",
+  install_requires=["numpy",
+                    "Pillow",
+                    "PyOpenGL",
+                    "PyQt5",
+                    "PyQt5-sip"],
   classifiers=[
     "Programming Language :: Python :: 3",
     # License is GPLv3 because I'm using PyQt5
