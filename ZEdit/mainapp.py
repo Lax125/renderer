@@ -271,10 +271,12 @@ class InteractiveGLWidget(QGLWidget):
         if self.sel_dv is None:
           self.requestLookAt.emit(engine.monoselected)
           self.sel_dv = dict()
-          for rend in selRends:
-            selpos = rend.getTruePos()
-            self.sel_dv[rend] = selpos - cam.pos
-        cam.pos += dp
+          selpos = sel.getTruePos()
+          self.sel_dv[sel] = selpos - cam.pos
+##          for rend in selRends:
+##            selpos = rend.getTruePos()
+##            self.sel_dv[rend] = selpos - cam.pos
+        cam.pos += np.linalg.norm(np.array(self.sel_dv[sel])) * dp
         for rend in selRends:
           new_selpos = cam.pos + self.sel_dv[rend]
           self.requestMoveRendTo.emit(rend, *new_selpos)
@@ -1982,6 +1984,7 @@ class MainApp(QMainWindow):
     heading = QLabel("Symlink", font=self.fonts["heading"], alignment=Qt.AlignCenter)
 
     name = self.linkEdit_name = QLineEdit()
+    directory = self.linkEdit_directory = QPushButton(icon=self.icons["Link"])
     delete = QPushButton(text="Delete", icon=self.icons["Delete"])
     x = self.linkEdit_x = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
     y = self.linkEdit_y = QDoubleSpinBox(decimals=PRECISION, minimum=-B32, maximum=B32-1)
@@ -1999,6 +2002,7 @@ class MainApp(QMainWindow):
     
     name.textChanged.connect(self.updateSelected)
     L.addWidget(name)
+    L.addWidget(directory)
 
     poseBox = QGroupBox("Pose")
     L.addWidget(poseBox)
@@ -2019,6 +2023,11 @@ class MainApp(QMainWindow):
     sceneLayout = QFormLayout()
     sceneBox.setLayout(sceneLayout)
     sceneLayout.addWidget(visible)
+
+    def selectDirectory():
+      assert isinstance(engine.monoselected, Link)
+      self.select(engine.monoselected.directory)
+    directory.clicked.connect(selectDirectory)
     
     delete.clicked.connect(self.deleteSelected)
     L.addWidget(delete)
@@ -2266,11 +2275,13 @@ class MainApp(QMainWindow):
     sel = engine.monoselected
     self.selectParent()
     self.shallowPaste(sel)
+    self.select(sel)
 
   def deepPasteSelected(self):
     sel = engine.monoselected
     self.selectParent()
     self.deepPaste(sel)
+    self.select(sel)
 
   def move(self, rend, directory):
     try:
@@ -2545,13 +2556,15 @@ class MainApp(QMainWindow):
 
     elif type(S) is Link:
       name = S.name
+      dirName = S.directory.name
       x, y, z = S.pos
       rx, ry, rz = S.rot
       rx, ry, rz = (cyclamp(r*180/pi, (-180, 180)) for r in S.rot)
       sx, sy, sz = S.scale
       visible = S.visible
       
-      for setting, text in [(self.linkEdit_name, name)]:
+      for setting, text in [(self.linkEdit_name, name),
+                            (self.linkEdit_directory, dirName)]:
         setting.blockSignals(True)
         setting.setText(text)
         setting.blockSignals(False)

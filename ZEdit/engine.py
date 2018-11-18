@@ -305,7 +305,8 @@ class Renderable:
   def placeOrigin(self):
     PLAIN_SHADER.use()
     glEnable(GL_BLEND)
-    glColor4f(0.0, 0.0, 1.0, 0.2)
+    glColor4f(0.0, 0.0, 1.0, 0.05)
+    glDisable(GL_CULL_FACE)
 ##    glLineWidth(10)
 ##    x, y, z = self.getTruePos()
 ##    camx, camy, camz = camPos
@@ -348,7 +349,7 @@ class Renderable:
     glDepthFunc(GL_GREATER) # render the following if it is behind
     if self in selected:
       self.placeBBox()
-    if self is monoselected:
+    if self is monoselected and linkDepth == 0:
       self.placeAxes()
     glDepthFunc(GL_LESS)
     glDisable(GL_LINE_STIPPLE)
@@ -806,10 +807,13 @@ class Link(Renderable): # TODO: more overloads
 
   def renderSelectedAE(self):
     super().renderSelectedAE()
+    global linkDepth
+    linkDepth += 1
     for rend in self.directory.rends:
       glPushMatrix()
       rend.renderSelectedAE()
       glPopMatrix()
+    linkDepth -= 1
 
   def renderOverlay(self):
     super().renderOverlay()
