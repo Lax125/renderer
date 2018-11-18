@@ -1,8 +1,20 @@
+#!/usr/bin/env python
+'''
+setup.py
+Makes a distribution for PyPi
+To make distribution:
+  $ python setup.py sdist bdist-wheel
+'''
+# the current standard for making
+# distributions of Python 3.x modules
+# is setuptools.
 import setuptools
 
+# load long description from README.md
 with open("README.md", 'r') as fh:
   long_description = fh.read()
 
+# make distribution for submission to PyPi
 setuptools.setup(
   name="ZEdit",
   version="1.0.9",
@@ -18,7 +30,9 @@ setuptools.setup(
   },
   classifiers=[
     "Programming Language :: Python :: 3",
+    # License is GPLv3 because I'm using PyQt5
     "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    # All modules I are cross-compatible.
     "Operating System :: OS Independent",
   ],
 )

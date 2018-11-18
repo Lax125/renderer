@@ -29,10 +29,12 @@ def gentexcoord(f):
     return (X, Y)
 
 def standardizeImage(filename):
+    '''Resized image to standard size (1024, 1024) and converts it into RGBA'''
     return Image.open(filename).resize((1024, 1024)).convert("RGBA")
 
 def load_texture(filename):
-    '''Returns the id for the texture'''
+    '''Loads OpenGL TexImage object from filename
+       and Returns the id for the texture'''
     textureSurface = standardizeImage(filename)
     textureData = textureSurface.tobytes("raw")
     IM = Image.frombytes("RGBA", textureSurface.size, textureData)
@@ -46,15 +48,18 @@ def load_texture(filename):
     return ID
 
 def load_thumbnail(filename):
+    '''Resizes image from filename to (150, 150) and returns it.'''
     im = Image.open(filename)
     return im.resize((150, 150))
 
 def im2pixmap(im):
+    '''Turns PIL image im into a Qt pixmap.'''
     qim = ImageQt(im)
     pixmap = QPixmap.fromImage(qim)
     return pixmap
 
 def im2qim(im):
+    '''Turns PIL image into an ImageQt.'''
     qim = ImageQt(im)
     return qim
 
@@ -64,6 +69,7 @@ class Asset:
 
 
 class Tex(Asset):
+    '''Describes a texture with an image and shading properties'''
     IDs = id_gen(1)
     texDict = dict()
     def __init__(self, filename, diffuse=1.0, specular=0.0, fresnel=0.0, shininess=10.0, name=None):
@@ -95,7 +101,7 @@ class Tex(Asset):
 
     def delete(self):
         self.deleted = True
-        glDeleteTextures([self.texID])
+        glDeleteTextures([self.texID]) # Removes this texture's image from memory
         self.texID = 0 # OpenGL's default texture, white
         self.filename = None
         self.name = None
@@ -112,6 +118,7 @@ class Tex(Asset):
         return copy.copy(self)
 
 class Mesh(Asset):
+    '''Describes a mesh with geometry and rendering specifications'''
     IDs = id_gen(1)
     meshDict = dict()
     def __init__(self, filename, name=None, cullbackface=True):
@@ -359,6 +366,7 @@ class Mesh(Asset):
         return copy.copy(self)
 
 class Bulb(Asset):
+    '''Describes a bulb with power and color specifications.'''
     IDs = id_gen()
     bulbDict = dict()
     def __init__(self, power=1.0, color=(1.0, 1.0, 1.0), name=None):

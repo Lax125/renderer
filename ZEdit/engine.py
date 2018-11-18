@@ -41,6 +41,18 @@ camTrueFovy = None
 linkDepth = 0
 
 def mix_permute(A, B):
+  '''
+Generates all permutations of mixing lists A and B.
+Example - mix_permute([1, 2, 3], [4, 5, 6]) yields:
+   [1, 2, 3],
+   [1, 2, 6],
+   [1, 5, 3],
+   [1, 5, 6],
+   [4, 2, 3],
+   [4, 2, 6],
+   [4, 5, 3],
+   [4, 5, 6]
+  '''
   if len(A) == 0 or len(B) == 0:
     yield []
     return
@@ -49,21 +61,29 @@ def mix_permute(A, B):
     yield l+[B[-1]]
 
 def normalize(xyz):
+  '''Returns normalized version of vector xyz'''
   magnitude = np.linalg.norm(xyz)
   return xyz/magnitude
 
-def glGetModelview(): # convenience: get modelview matrix
-  return glGetFloatv(GL_MODELVIEW_MATRIX)
+def glGetModelview():
+  '''Get OpenGL Model*View transformation matrix'''
+  return np.matrix(glGetFloatv(GL_MODELVIEW_MATRIX))
 
 def glGetModelviewPos():
+  '''Get position from OpenGL Model*View transformation matrix'''
   A = np.array(glGetModelview())
   return np.array(A[3,0:3])
 
 def glGetModelviewAxes():
+  '''
+Gets 3 vectors that define the 3 axes (x,y,z)
+from OpenGL Model*View transformation matrix.
+  '''
   A = np.array(glGetModelview())
   return A[0,0:3], A[1,0:3], A[2,0:3]
 
 def glApplyRot(rot, invert=False):
+  '''Applies rotation (rx, ry, rz) with this program's rotational standards.'''
   rx, ry, rz = rot
   if not invert:
     glRotate(degrees(-ry), 0.0, 1.0, 0.0)
@@ -75,6 +95,10 @@ def glApplyRot(rot, invert=False):
     glRotate(-degrees(-ry), 0.0, 1.0, 0.0)
 
 def gluGlobe():
+  '''
+Places a radius 1 sphere where OpenGL's Model*View
+transformation matrix iswithout writing to depth buffer.
+  '''
   glMatrixMode(GL_MODELVIEW)
   glPushMatrix()
   PLAIN_SHADER.use()
@@ -102,61 +126,56 @@ def gluCamera(camera, aspect):
 def testRayBBIntersection(rayV, BBmin, BBmax):
   '''Test if a ray from modelview origin intersects a bounding box in current modelview matrix. Returns the distance if they instersect and None they do not.'''
   ## credit: http://www.opengl-tutorial.org/miscellaneous/clicking-on-objects/picking-with-custom-ray-obb-function/
-  tMin = 0.0 # the length of the ray if it were cut off by the closest side of the BBox
-  tMax = 10000000.0 # the length of the ray if it were cut off by the farthest side of the BBox
-  dPos = glGetModelviewPos()
-
-  axes = xAxis, yAxis, zAxis = glGetModelviewAxes()
-  xScale, yScale, zScale = (np.linalg.norm(axis) for axis in axes)
-  scale = np.array([xScale, yScale, zScale])
-  OBBmin = np.array(BBmin)*scale
-  OBBmax = np.array(BBmax)*scale
-  xAUnit, yAUnit, zAUnit = (axis/(EPSILON if AS == 0.0 else AS) for axis, AS in zip(axes, scale))
-  
+  rayV = np.array(rayV)
+  BBmin = np.array(BBmin)
+  BBmax = np.array(BBmax)
+  invertedModelview = glGetModelview()**-1
+  # test if origin is in the OBB
+  xyz1 = np.matrix([0.0, 0.0, 0.0, 1.0])*invertedModelview
+  origin_rel = np.array(xyz1).flatten()[0:3]
+  if (BBmin < origin_rel).all() and (origin_rel < BBmax).all():
+    return None
+  # test all axes
+  def extrapolateDistance(xyz, dxyz, axis, n):
+    if dxyz[axis] == 0:
+      return float("Inf")
+    m = np.linalg.norm(dxyz)/dxyz[axis]
+    a = n - xyz[axis]
+    return a*m
   # x
-  e = np.dot(xAUnit, dPos)
-  f = np.dot(rayV, xAUnit)
-  if f == 0.0:
-    f = EPSILON
-  t1 = (e+OBBmin[0])/f
-  t2 = (e+OBBmax[0])/f
-  if t1 > t2:
-    t1, t2 = t2, t1
-  tMin = max(tMin, t1)
-  tMax = min(tMax, t2)
-  if tMax < tMin:
-    return None # no intersection
+  d1 = extrapolateDistance(origin_rel, rayV_rel, 0, BBmin[0])
+  d2 = extrapolateDistance(origin_rel, rayV_rel, 0, BBmax[0])
+##  print("x", d1, d2)
+  if d1 > d2:
+    d1, d2 = d2, d1
+  dMin = max(dMin, d1)
+  dMax = min(dMax, d2)
+  if dMax < dMin:
+    return None
 
   # y
-  e = np.dot(yAUnit, dPos)
-  f = np.dot(rayV, yAUnit)
-  if f == 0.0:
-    f = EPSILON
-  t1 = (e+OBBmin[1])/f
-  t2 = (e+OBBmax[1])/f
-  if t1 > t2:
-    t1, t2 = t2, t1
-  tMin = max(tMin, t1)
-  tMax = min(tMax, t2)
-  if tMax < tMin:
-    return None # no intersection
+  d1 = extrapolateDistance(origin_rel, rayV_rel, 1, BBmin[1])
+  d2 = extrapolateDistance(origin_rel, rayV_rel, 1, BBmax[1])
+##  print("y", d1, d2)
+  if d1 > d2:
+    d1, d2 = d2, d1
+  dMin = max(dMin, d1)
+  dMax = min(dMax, d2)
+  if dMax < dMin:
+    return None
 
   # z
-  e = np.dot(zAUnit, dPos)
-  f = np.dot(rayV, zAUnit)
-  if f == 0.0:
-    f = EPSILON
-  t1 = (e+OBBmin[2])/f
-  t2 = (e+OBBmax[2])/f
-  if t1 > t2:
-    t1, t2 = t2, t1
-  tMin = max(tMin, t1)
-  tMax = min(tMax, t2)
-  if tMax < tMin:
-    return None # no intersection
+  d1 = extrapolateDistance(origin_rel, rayV_rel, 2, BBmin[2])
+  d2 = extrapolateDistance(origin_rel, rayV_rel, 2, BBmax[2])
+##  print("z", d1, d2)
+  if d1 > d2:
+    d1, d2 = d2, d1
+  dMin = max(dMin, d1)
+  dMax = min(dMax, d2)
+  if dMax < dMin:
+    return None
 
-  return tMin
-  
+  return dMin
 
 class Camera:
   '''Describes a camera in 3-D position and rotation'''
@@ -830,6 +849,8 @@ class Scene:
     self.ambientColor = ambientColor
     self.ambientPower = ambientPower
 
+  # convenience functions for set operation
+
   def __iter__(self):
     return self.rends.__iter__()
 
@@ -845,7 +866,8 @@ class Scene:
   def clear(self):
     self.rends.clear()
 
-  def render(self, camera, aspect=1.33, shader_name="basic"):
+  def render(self, camera, aspect=1.33):
+    '''Renders this entire scene'''
     global camPos, camTrueFovy, PHONG_SHADER
     camPos = camera.pos
     camTrueFovy = camera.getTrueFovy()
@@ -903,6 +925,11 @@ class Scene:
       glPopMatrix()
 
   def getRendFromXY(self, XY, camera, aspect=1.33):
+    '''
+Uses ray-box collision to get closes renderable whose
+bbox collides with the ray made by the user's cursor.
+If there aren't any, returns None.
+    '''
     gluCamera(camera, aspect)
     glMatrixMode(GL_MODELVIEW)
     glLoadIdentity()
@@ -924,6 +951,7 @@ class Scene:
     return result
 
   def rendExists(self, rend):
+    '''Tests whether rend is in my tree of renderables.'''
     def test(r):
       if r == rend:
         return True
@@ -934,6 +962,7 @@ class Scene:
     return any(test(r) for r in self.rends)
 
   def debug_tree(self):
+    '''Prints out tree of renderable objects, treating links as their directories.'''
     def tree(rend):
       yield "%d: %s"%(id(rend), rend.name)
       for child in rend.cycleCheckChildren():
@@ -949,6 +978,10 @@ class Scene:
 initialised = False
 
 def initEngine(): # only call once context has been established
+  '''
+Initialises this module. Only call this
+once an OpenGL context is established.
+  '''
   global initialised
   if initialised:
     return

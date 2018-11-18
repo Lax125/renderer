@@ -748,9 +748,11 @@ class MainApp(QMainWindow):
     self.setAcceptDrops(True)
   
   def _init_style(self):
+    '''Apply stylesheet'''
     self.setStyleSheet(open("./style.qss").read())
 
   def _load_assets(self):
+    '''Load all icons'''
     self.icons = dict()
     for name, stdicon in [("Info", QStyle.SP_MessageBoxInformation),
                           ("Success", QStyle.SP_DialogApplyButton),
@@ -813,8 +815,6 @@ class MainApp(QMainWindow):
 
   def _make_widgets(self):
     '''Initialise all widgets'''
-##    layout = QHBoxLayout()
-##    self.setLayout(layout)
     
     bar = self.menuBar()
     file = bar.addMenu("&File")
@@ -997,6 +997,7 @@ class MainApp(QMainWindow):
     
 
   def _init_hotkeys(self):
+    '''Initialise hotkeys for ease-of-use'''
     def quickShortcut(keySeq, qaction):
       qaction.setShortcut(QKeySequence(keySeq))
     quickShortcut("Ctrl+N", self.fileMenu_new)
@@ -1034,15 +1035,18 @@ class MainApp(QMainWindow):
     self.keyBind_togglemode = quickKeybind("Q", self.toggleMode)
 
   def showHelp(self):
+    '''Show help pane'''
     self.helpPane.show()
     self.helpPane.activateWindow()
     self.helpPane.setFocus()
 
   def focusGL(self):
+    '''Set mouse and keyboard focus on gl widget'''
     self.activateWindow()
     self.gl.setFocus()
 
   def glFocusChanged(self, glHasFocus):
+    '''Activates when focus of gl widget changes'''
     if glHasFocus:
       self.glDSF.setRadius(20)
     else:
@@ -1050,11 +1054,13 @@ class MainApp(QMainWindow):
     self.glDSF.update()
 
   def updateMenu(self):
+    '''Update menu's checkboxes'''
     self.viewMenu_env.setChecked(self.envPane.isVisible())
     self.viewMenu_edit.setChecked(self.editPane.isVisible())
     self.viewMenu_log.setChecked(self.logPane.isVisible())
 
   def curryTogglePane(self, pane):
+    '''Get function for toggling the visibility of pane'''
     def togglePane():
       v = pane.isVisible()
       pane.setVisible(not v)
@@ -1091,20 +1097,23 @@ class MainApp(QMainWindow):
     self.rendTree.clear()
 
   def fullMode(self):
+    '''Set rendering mode to FULL'''
     engine.renderingMode = engine.FULL
     self.gl.update()
 
   def flatMode(self):
+    '''Set rendering mode to FLAT'''
     engine.renderingMode = engine.FLAT
     self.gl.update()
 
   def toggleMode(self):
+    '''Toggle rendering mode between FLAT and FULL'''
     engine.renderingMode += 1
     engine.renderingMode %= engine.NUM_MODES
     self.gl.update()
 
   def addEnvObj(self, envobj, directory=None):
-    '''Adds environment object into appropriate QListWidget'''
+    '''Add environment object into appropriate QListWidget'''
     if isinstance(envobj, Renderable):
       self.rendTree.add(envobj, directory)
     QListDict = {Mesh: self.meshList,
@@ -1117,6 +1126,7 @@ class MainApp(QMainWindow):
       L.add(envobj)
 
   def add(self, obj, directory=None):
+    '''Add Asset or Renderable, optionally to a directory'''
     if directory is None:
       directory = self.rendTree.getCurrentDir()
     if self.remote.add(obj, directory):
@@ -1125,6 +1135,7 @@ class MainApp(QMainWindow):
 ##    self.remote.getScene().debug_tree()
 
   def setCurrentFilename(self, fn, silent=False):
+    '''Set fn as the current filename to save to'''
     self.filename = fn
     if silent:
       return
@@ -1142,8 +1153,19 @@ class MainApp(QMainWindow):
     if base:
       B = Bulb(name="Main Bulb")
       self.add(B)
-      self.add(Lamp(B, pos=Point(0, 1, 0), name="Main Lamp"))
-      self.add(Directory(name="Main"))
+      self.add(Lamp(B, pos=Point(1, 1.7579, 0.7396), name="Main Lamp"))
+      T = Tex("./assets/textures/white.png", name="White")
+      M = Mesh("./assets/meshes/cube.obj", name="Cube")
+      self.add(T)
+      self.add(M)
+      default_cube = Model(M, T)
+      main_directory = Directory(name="Main")
+      self.add(main_directory)
+      self.add(default_cube, main_directory)
+      cam = self.remote.getCamera()
+      cam.pos = Point(-2, 2, 2)
+      self.remote.lookAt(default_cube)
+      
     self.select(None)
     engine.monoselected = None
     if not silent:
@@ -1227,15 +1249,6 @@ class MainApp(QMainWindow):
       try:
         self.newProject(silent=True)
         self.saver.load_appdata()
-##        R = Bulb(color=(1.0, 0.0, 0.0), power=10.0)
-##        self.add(R)
-##        G = Bulb(color=(0.0, 1.0, 0.0), power=10.0)
-##        self.add(G)
-##        B = Bulb(color=(0.0, 0.0, 1.0), power=10.0)
-##        self.add(B)
-##        self.add(Lamp(R, pos=Point(0.0, 0.0, 0.0)))
-##        self.add(Lamp(G, pos=Point(-1.0, 0.0, 0.0)))
-##        self.add(Lamp(B, pos=Point(-0.5, 0.0, sqrt(3)/2)))
       except:
         self.logEntry("Error", "Unable to restore previous session.")
       else:
@@ -1265,12 +1278,14 @@ class MainApp(QMainWindow):
         self.loadAssetFile(fn)
 
   def makeBulb(self):
+    '''Make new Bulb with default settings'''
     B = Bulb()
     # Modify bulb with modal: TODO
     self.add(B)
     self.logEntry("Success", "Made bulb.")
 
   def loadAssetFile(self, fn):
+    '''Load asset from file fn'''
     ext = os.path.splitext(fn)[1]
     if ext in [".bmp", ".png", ".jpg", ".jpeg"]:
       try:
@@ -1394,7 +1409,8 @@ class MainApp(QMainWindow):
     lasty = y.value()
     lastz = z.value()
 
-    def tryMakeModel(): # Attempt to construct Model from selected settings
+    def tryMakeModel():
+      '''Attempt to construct Model from selected settings'''
       nonlocal lastx, lasty, lastz # allows access to lastx, lasty, lastz declared in the outer function
       m = mList.selectedItems()
       t = tList.selectedItems()
@@ -1434,7 +1450,7 @@ class MainApp(QMainWindow):
     M.exec_() # show the modal
 
   def makeLamps(self):
-    '''Shows modal for making lamps'''
+    '''Show modal for making lamps'''
     M = Modal(self)
     M.setWindowTitle("Make Lamps")
     layout = QGridLayout()
@@ -1502,7 +1518,7 @@ class MainApp(QMainWindow):
     M.exec_()
 
   def makeGroups(self):
-    '''Shows modal for making groups'''
+    '''Show modal for making groups'''
     M = Modal(self)
     M.setWindowTitle("Make Groups")
     layout = QGridLayout()
@@ -1546,7 +1562,8 @@ class MainApp(QMainWindow):
     lasty = y.value()
     lastz = z.value()
 
-    def tryMakeGroup(): # Attempt to construct Group from selected settings
+    def tryMakeGroup():
+      '''Attempt to construct Group from selected settings'''
       nonlocal lastx, lasty, lastz # allows access to lastx, lasty, lastz declared in the outer function
       xv, yv, zv = x.value(), y.value(), z.value()
       pos = Point(xv, yv, zv)
@@ -1569,6 +1586,7 @@ class MainApp(QMainWindow):
     M.exec_() # show the modal
 
   def quickGroup(self):
+    '''Make Group in current Directory'''
     cam = self.remote.getCamera()
     directory = Directory()
     directory.pos, directory.rot = basePosRot(cam.pos, cam.rot, engine.monoselected)
@@ -1577,13 +1595,14 @@ class MainApp(QMainWindow):
     self.select(directory)
 
   def recolorAmbientLight(self):
+    '''Prompt user to recolor the ambient light'''
     M = QColorDialog(self)
     C = M.getColor()
     self.remote.getScene().ambientColor = C.redF(), C.greenF(), C.blueF()
     self.updateSceneEdit()
 
   def initEditPane(self):
-    '''Initialises the edit pane'''
+    '''Initialise the edit pane'''
     self.initSceneEdit()
     self.initCamEdit()
     self.initSelEdit()
