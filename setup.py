@@ -17,7 +17,7 @@ with open("README.md", 'r') as fh:
 # make distribution for submission to PyPi
 setuptools.setup(
   name="ZEdit",
-  version="1.0.10",
+  version="1.0.11",
   author="Marcus Koh",
   author_email="marcuskoh29@gmail.com",
   description="A simple 3-D rendering engine and editor",

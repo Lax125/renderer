@@ -4,6 +4,7 @@ from all_modules import *
 from appdata import *
 from rotpoint import Rot, Point
 from engine import Model, Lamp, Directory, Link
+import engine
 from asset import Mesh, Tex, Bulb, id_gen
 
 def castList(types, l):
@@ -170,7 +171,7 @@ class Saver:
     textures = [self.defaultTexture]
     bulbs = [self.defaultBulb]
     directories = [None] # MainApp.add(app, rend, None) adds rend as toplevel item to the scene
-    dirStack = [None]
+    dirStack = [engine.monoselected]
     for line in dataopen("tmp/blueprint.dat", "r"):
 ##      print(line, end="")
       words = shlex.split(line)
