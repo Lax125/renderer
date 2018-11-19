@@ -363,6 +363,7 @@ class InteractiveGLWidget(QGLWidget):
     super().focusOutEvent(event)
     self.dropShadow.setBlurRadius(0)
     self.focusChanged.emit(False)
+    self.heldKeys.clear()
 
 class ObjList(QListWidget):
   '''QListWidget of environment objects (Mesh, Tex, Model, Lamp)'''
