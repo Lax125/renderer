@@ -561,7 +561,7 @@ class ObjTree(QTreeWidget):
     self.setMouseTracking(True)
     self.setSortingEnabled(True)
 
-    self.contextMenu = QMenu()
+    self.contextMenu = QMenu(self)
     self.contextMenu_copy = QAction("Copy")
     self.contextMenu_copy.triggered.connect(self.copySelected)
     self.contextMenu_cut = QAction("Cut")
