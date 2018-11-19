@@ -139,7 +139,7 @@ class WidgetRow(QWidget):
 class InteractiveGLWidget(QGLWidget):
   '''OpenGL+QT widget'''
   drawScene = pyqtSignal(float) # signal emmited when wanting to redraw scene
-  mouseOver = pyqtSignal(QMouseEvent)
+  mouseOver = pyqtSignal(tuple)
   clicked = pyqtSignal(QMouseEvent)
   requestSelect = pyqtSignal(object)
   requestUpdate = pyqtSignal()
@@ -171,6 +171,7 @@ class InteractiveGLWidget(QGLWidget):
     self.sel_dv = None # dxyz's for camera to each selected rend
     self.sel_dr = None # distance from camera to monoselected
     self.mousePos = None
+    self.trueMousePos = None
     self.dragging = False
     self.cam_rot = None
 
@@ -221,6 +222,9 @@ class InteractiveGLWidget(QGLWidget):
     now = time.time()
     self.dt = now - self.lastt
     self.lastt = now
+    if self.trueMousePos is not None:
+      pass
+##      self.mouseOver.emit(self.trueMousePos)
     if self.handleHeldKeys():
 ##      engine.renderingMode = engine.FLAT
       self.requestUpdate.emit()
@@ -315,7 +319,7 @@ class InteractiveGLWidget(QGLWidget):
     self.update()
 
   def mouseMoveEvent(self, event):
-    X, Y = event.x(), event.y()
+    self.trueMousePos = X, Y = event.x(), event.y()
     cam = self.getCamera()
     sel = engine.monoselected
     if self.dragging:
@@ -343,7 +347,7 @@ class InteractiveGLWidget(QGLWidget):
         cam.rot = Rot(dY/100, -dX/100, 0)*self.cam_rot
         
       self.requestRectifyCamera.emit()
-    self.mouseOver.emit(event)
+    self.mouseOver.emit((X, Y))
     self.update()
 
   def mouseReleaseEvent(self, event):
@@ -353,6 +357,11 @@ class InteractiveGLWidget(QGLWidget):
     if (event.x(), event.y()) == self.mousePos:
       self.clicked.emit(event)
     self.update()
+
+  def leaveEvent(self, event):
+    super().leaveEvent(event)
+    self.trueMousePos = None
+    engine.highlighted = None
 
   def focusInEvent(self, event):
     super().focusInEvent(event)
@@ -369,6 +378,8 @@ class ObjList(QListWidget):
   '''QListWidget of environment objects (Mesh, Tex, Model, Lamp)'''
   requestUpdate = pyqtSignal()
   requestSelect = pyqtSignal(object)
+  requestDuplicate = pyqtSignal(list)
+  requestDelete = pyqtSignal(list)
   
   iconDict = dict() # obj type --> icon
   bgDict = dict() # obj type --> bg brush
@@ -379,6 +390,17 @@ class ObjList(QListWidget):
     self.itemClicked.connect(self.onItemClicked)
     self.itemDoubleClicked.connect(self.onItemDoubleClicked)
     self.itemSelectionChanged.connect(self.onItemSelectionChanged)
+    self.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.customContextMenuRequested.connect(self.showContextMenu)
+
+    # make context menu
+    self.contextMenu = QMenu(self)
+    self.contextMenu_duplicate = QAction("Duplicate")
+    self.contextMenu_delete = QAction("Delete")
+    self.contextMenu_duplicate.triggered.connect(self.duplicateSelected)
+    self.contextMenu_delete.triggered.connect(self.deleteSelected)
+    self.contextMenu.addAction(self.contextMenu_duplicate)
+    self.contextMenu.addAction(self.contextMenu_delete)
 
   def onItemClicked(self, item):
     if isinstance(item.obj, Renderable):
@@ -394,11 +416,11 @@ class ObjList(QListWidget):
 
   def onItemSelectionChanged(self):
     items = self.selectedItems()
-    engine.selected = set([item.obj for item in items])
     if items:
       self.requestSelect.emit(items[0].obj)
     else:
       self.requestSelect.emit(None)
+    engine.selected = set([item.obj for item in items])
 
   def add(self, obj):
     new_item = QListWidgetItem(obj.name)
@@ -422,6 +444,12 @@ class ObjList(QListWidget):
     k = event.key()
     pass # delete key now handled globally
 
+  def showContextMenu(self, pos):
+    selItems = self.selectedItems()
+    self.contextMenu_duplicate.setEnabled(len(selItems) != 0)
+    self.contextMenu_delete.setEnabled(len(selItems) != 0)
+    self.contextMenu.exec(self.mapToGlobal(pos))
+
   def update(self):
     for i in range(self.count()):
       item = self.item(i)
@@ -437,6 +465,14 @@ class ObjList(QListWidget):
 
   def take(self, obj):
     return self.takeItem(self.find(obj))
+
+  def duplicateSelected(self):
+    objects = [item.obj for item in self.selectedItems()]
+    self.requestDuplicate.emit(objects)
+
+  def deleteSelected(self):
+    objects = [item.obj for item in self.selectedItems()]
+    self.requestDelete.emit(objects)
 
 class ObjNode(QTreeWidgetItem):
   objTypenameDict = {Mesh: "Mesh",
@@ -500,6 +536,13 @@ class ObjTree(QTreeWidget):
   requestSelectPrevSibling = pyqtSignal()
   requestSelectNextSibling = pyqtSignal()
   requestLookAt = pyqtSignal(object) # signal emitted when wanting to look at a Renderable or Point
+
+  requestCopy = pyqtSignal(object)
+  requestCut = pyqtSignal(object)
+  requestPaste = pyqtSignal()
+  requestLink = pyqtSignal()
+  requestDuplicate = pyqtSignal()
+  requestDelete = pyqtSignal()
   
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
@@ -517,6 +560,29 @@ class ObjTree(QTreeWidget):
     self.itemEntered.connect(self.onItemEntered)
     self.setMouseTracking(True)
     self.setSortingEnabled(True)
+
+    self.contextMenu = QMenu()
+    self.contextMenu_copy = QAction("Copy")
+    self.contextMenu_copy.triggered.connect(self.copySelected)
+    self.contextMenu_cut = QAction("Cut")
+    self.contextMenu_cut.triggered.connect(self.cutSelected)
+    self.contextMenu_paste = QAction("Paste")
+    self.contextMenu_paste.triggered.connect(self.pasteSelected)
+    self.contextMenu_link = QAction("Link")
+    self.contextMenu_link.triggered.connect(self.linkSelected)
+    self.contextMenu_duplicate = QAction("Duplicate")
+    self.contextMenu_duplicate.triggered.connect(self.duplicateSelected)
+    self.contextMenu_delete = QAction("Delete")
+    self.contextMenu_delete.triggered.connect(self.deleteSelected)
+    self.contextMenu.addAction(self.contextMenu_copy)
+    self.contextMenu.addAction(self.contextMenu_cut)
+    self.contextMenu.addAction(self.contextMenu_paste)
+    self.contextMenu.addAction(self.contextMenu_link)
+    self.contextMenu.addAction(self.contextMenu_duplicate)
+    self.contextMenu.addAction(self.contextMenu_delete)
+
+    self.setContextMenuPolicy(Qt.CustomContextMenu)
+    self.customContextMenuRequested.connect(self.showContextMenu)
     
   def add(self, obj, directory=None):
     '''Adds ObjNode to a directory'''
@@ -683,6 +749,39 @@ class ObjTree(QTreeWidget):
       self.requestMove.emit(self.itemDragged.obj, item.obj)
     else:
       self.requestMove.emit(self.itemDragged.obj, item.obj.parent)
+
+  def copySelected(self):
+    selItems = self.selectedItems()
+    if selItems:
+      self.requestCopy.emit(selItems[0].obj)
+  def cutSelected(self):
+    selItems = self.selectedItems()
+    if selItems:
+      self.requestCut.emit(selItems[0].obj)
+  def pasteSelected(self):
+    self.requestPaste.emit()
+  def linkSelected(self):
+    self.requestLink.emit()
+  def duplicateSelected(self):
+    selItems = self.selectedItems()
+    if selItems:
+      objects = [item.obj for item in selItems]
+      self.requestDuplicate.emit(objects)
+  def deleteSelected(self):
+    selItems = self.selectedItems()
+    if selItems:
+      objects = [item.obj for item in selItems]
+      self.requestDelete.emit(objects)
+
+  def showContextMenu(self, pos):
+    selItems = self.selectedItems()
+    self.contextMenu_copy.setEnabled(len(selItems) > 0)
+    self.contextMenu_cut.setEnabled(len(selItems) > 0)
+    self.contextMenu_paste.setEnabled(engine.clipboard is not None)
+    self.contextMenu_link.setEnabled(isinstance(engine.monoselected, Directory))
+    self.contextMenu_duplicate.setEnabled(len(selItems) > 0)
+    self.contextMenu_delete.setEnabled(len(selItems) > 0)
+    self.contextMenu.exec(self.mapToGlobal(pos))
   
 class Modal(QDialog):
   '''A dialog box that grabs focus until closed'''
@@ -988,7 +1087,7 @@ class MainApp(QMainWindow):
 
     # connect signals from widgets
     self.gl.drawScene.connect(self.remote.renderScene)
-    self.gl.mouseOver.connect(lambda e: self.highlightFromXY((e.x(),e.y())))
+    self.gl.mouseOver.connect(self.highlightFromXY)
     self.gl.clicked.connect(lambda e: self.selectFromXY((e.x(),e.y())))
     self.gl.requestSelect.connect(self.select)
     self.gl.requestUpdate.connect(self.update)
@@ -1002,10 +1101,16 @@ class MainApp(QMainWindow):
 
     self.texList.requestUpdate.connect(self.update)
     self.texList.requestSelect.connect(self.select)
+    self.texList.requestDuplicate.connect(self.duplicate)
+    self.texList.requestDelete.connect(self.deleteMulti)
     self.meshList.requestUpdate.connect(self.update)
     self.meshList.requestSelect.connect(self.select)
+    self.meshList.requestDuplicate.connect(self.duplicate)
+    self.meshList.requestDelete.connect(self.deleteMulti)
     self.bulbList.requestUpdate.connect(self.update)
     self.bulbList.requestSelect.connect(self.select)
+    self.bulbList.requestDuplicate.connect(self.duplicate)
+    self.bulbList.requestDelete.connect(self.deleteMulti)
     
     self.rendTree.requestUpdate.connect(self.update)
     self.rendTree.requestMove.connect(self.move)
@@ -1015,6 +1120,12 @@ class MainApp(QMainWindow):
     self.rendTree.requestSelectPrevSibling.connect(self.selectPrevSibling)
     self.rendTree.requestSelectNextSibling.connect(self.selectNextSibling)
     self.rendTree.requestLookAt.connect(self.remote.lookAt)
+    self.rendTree.requestCopy.connect(self.copy)
+    self.rendTree.requestCut.connect(self.cut)
+    self.rendTree.requestPaste.connect(self.deepPasteClipboard)
+    self.rendTree.requestLink.connect(self.shallowPasteSelected)
+    self.rendTree.requestDuplicate.connect(self.deepPasteSelected)
+    self.rendTree.requestDelete.connect(self.deleteSelected)
     
 
   def _init_hotkeys(self):
@@ -1051,6 +1162,7 @@ class MainApp(QMainWindow):
     self.keyBind_deeppasteselected = quickKeybind("Shift+;", self.deepPasteSelected) # used when moving with Shift
     self.keyBind_shallowpasteclipboard = quickKeybind("Ctrl+Shift+V", self.shallowPasteClipboard)
     self.keyBind_shallowpasteselected = quickKeybind("Shift+'", self.shallowPasteSelected) # used when moving wih Shift
+    self.keyBind_duplicateselected = quickKeybind("Ctrl+D", self.duplicateSelected)
     self.keyBind_deleteselected = quickKeybind("Delete", self.deleteSelected)
     self.keyBind_focusgl = quickKeybind("/", self.focusGL)
     self.keyBind_togglemode = quickKeybind("Q", self.toggleMode)
@@ -2222,8 +2334,13 @@ class MainApp(QMainWindow):
 
 
   def deleteSelected(self):
-    '''Deletes selected object'''
-    self.delete(engine.monoselected)
+    '''Deletes selected object(s)'''
+    self.deleteMulti(engine.selected)
+
+  def deleteMulti(self, objects):
+    '''Deletes multiple objects'''
+    for obj in list(objects):
+      self.delete(obj)
     self.update()
 
   def delete(self, obj):
@@ -2257,8 +2374,14 @@ class MainApp(QMainWindow):
       self.select(None)
 
   def copySelected(self):
-    engine.clipboard = engine.monoselected
-    self.logEntry("Success", "Copied %s."%engine.monoselected.name)
+    self.copy(engine.monoselected)
+
+  def copy(self, obj):
+    if isinstance(obj, Renderable):
+      engine.clipboard = obj
+      self.logEntry("Success", "Copied %s."%obj.name)
+    else:
+      self.logEntry("Error", "Only scene elements can be copied. Use Ctrl+D instead.")
 
   def shallowPaste(self, obj):
     cam = self.remote.getCamera()
@@ -2270,8 +2393,10 @@ class MainApp(QMainWindow):
         self.add(sCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
+        return None
       else:
         self.logEntry("Success", "Deep pasted %s."%obj.name)
+        return sCopy
 
   def deepPaste(self, obj):
     cam = self.remote.getCamera()
@@ -2283,17 +2408,20 @@ class MainApp(QMainWindow):
         self.add(dCopy)
       except TreeError as e:
         self.logEntry("Error", "Symlink cycle: %s"%e)
+        return None
       else:
         self.logEntry("Success", "Deep pasted %s."%obj.name)
+        return dCopy
 
   def shallowPasteClipboard(self):
-    self.shallowPaste(engine.clipboard)
+    shallowCopiedObj = self.shallowPaste(engine.clipboard)
+    if shallowCopiedObj is not None:
+      self.select(shallowCopiedObj)
 
   def deepPasteClipboard(self):
-    try:
-      self.deepPaste(engine.clipboard)
-    except:
-      traceback.print_exc()
+    deepCopiedObj = self.deepPaste(engine.clipboard)
+    if deepCopiedObj is not None:
+      self.select(deepCopiedObj)
 
   def shallowPasteSelected(self):
     sel = engine.monoselected
@@ -2307,6 +2435,19 @@ class MainApp(QMainWindow):
     self.deepPaste(sel)
     self.select(sel)
 
+  def duplicate(self, objects):
+    for obj in list(objects):
+      deepCopiedObj = copy.deepcopy(obj)
+      if isinstance(obj, Asset):
+        self.add(deepCopiedObj)
+      elif isinstance(obj, Renderable):
+        self.select(obj.parent)
+        self.add(deepCopiedObj)
+      self.select(deepCopiedObj)
+
+  def duplicateSelected(self):
+    self.duplicate(engine.selected)
+
   def move(self, rend, directory):
     try:
       if rend.parent is None:
@@ -2319,6 +2460,10 @@ class MainApp(QMainWindow):
     else:
       self.rendTree.move(rend, directory)
       self.gl.update()
+
+  def cut(self, obj):
+    self.copy(obj)
+    self.delete(obj)
 
   def cutSelected(self):
     self.copySelected()
@@ -2700,7 +2845,6 @@ class MainApp(QMainWindow):
     self.logPane.hide()
     self.helpPane.hide()
     self.saver.update()
-    print("Goodbye!")
 
   def dragEnterEvent(self, event):
     if event.mimeData().hasUrls():
