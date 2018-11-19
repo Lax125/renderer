@@ -180,7 +180,11 @@ def testRayBBIntersection(rayV, BBmin, BBmax):
   if dMax < dMin:
     return None
 
-  return dMin
+  intersectionPoint_rel = origin_rel + normalize(rayV_rel)*dMin
+  intersectionPoint = np.array(
+    np.matrix([*intersectionPoint_rel, 1])*glGetModelview()
+    ).flatten()[0:3]
+  return np.linalg.norm(intersectionPoint)
 
 class Camera:
   '''Describes a camera in 3-D position and rotation'''

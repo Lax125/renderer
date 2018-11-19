@@ -1248,12 +1248,12 @@ class MainApp(QMainWindow):
       G = Directory(name=shortfn(fn))
       self.add(G)
       self.select(G)
-      self.load(fn)
+      self.load(fn, setGlobals=False)
 
-  def load(self, fn):
+  def load(self, fn, setGlobals=True):
     '''Load project from filename fn'''
     try:
-      self.saver.load(fn)
+      self.saver.load(fn, setGlobals=setGlobals)
     except IOError as e:
       self.logEntry("Error", "Unable to fully load from %s"%shortfn(fn))
       print(e)
@@ -1268,7 +1268,7 @@ class MainApp(QMainWindow):
     if self.saver.canRestore() and YNPrompt(self, "Restore", "Restore previous session?"):
       try:
         self.newProject(silent=True)
-        self.saver.load_appdata()
+        self.saver.load_appdata(setGlobals=False)
       except:
         self.logEntry("Error", "Unable to restore previous session.")
       else:

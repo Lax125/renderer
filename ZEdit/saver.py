@@ -147,7 +147,7 @@ class Saver:
     zipf = zipfile.ZipFile(fn, "w", zipfile.ZIP_DEFLATED)
     zipdir(tmppath, zipf)
 
-  def load(self, fn): # doesn't clear userenv or app
+  def load(self, fn, setGlobals=True): # doesn't clear userenv or app
     tmppath = datapath("tmp")
     
     # clear save folder
@@ -162,11 +162,11 @@ class Saver:
     unzipdir(zipf, tmppath)
 
     try:
-      self.load_appdata()
+      self.load_appdata(setGlobals=setGlobals)
     except Exception as e:
       raise IOError(e)
 
-  def load_appdata(self):
+  def load_appdata(self, setGlobals=True):
     meshes = [self.defaultMesh]
     textures = [self.defaultTexture]
     bulbs = [self.defaultBulb]
@@ -182,7 +182,7 @@ class Saver:
       if command == "#":
         pass
 
-      elif command == "AMBIENT":
+      elif command == "AMBIENT" and setGlobals:
         R,G,B, power = castList([*[float]*3, float], args)
         self.UE.scene.ambientColor = R,G,B
         self.UE.scene.ambientPower = power
@@ -257,7 +257,7 @@ class Saver:
         new_symlink = Link(directories[toIndex], pos=Point(x,y,z), rot=Rot(rx,ry,rz), scale=scale, visible=visible, name=name)
         self.app.add(new_symlink, directory=directories[fromIndex])
 
-      elif command == "cam":
+      elif command == "cam" and setGlobals:
         x,y,z,rx,ry,rz, fovy, zoom = castList([*[float]*6, float, float], args)
         self.R.configCamera(Point(x,y,z), Rot(rx,ry,rz), fovy, zoom)
 
